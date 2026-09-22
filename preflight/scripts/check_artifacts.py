@@ -30,20 +30,28 @@ def require_riscv_elf(path: Path) -> None:
 
 
 def main() -> int:
-    """校验预处理、AST、IR、汇编和对象阶段。 / Validate preprocessing, AST, IR, assembly, and object stages."""
+    """校验预处理、AST、双优化级 IR/汇编和对象。 / Validate preprocessing, AST, two optimization levels, and objects."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--preprocessed", type=Path, required=True)
     parser.add_argument("--ast", type=Path, required=True)
-    parser.add_argument("--llvm", type=Path, required=True)
-    parser.add_argument("--assembly", type=Path, required=True)
+    parser.add_argument("--llvm-o0", type=Path, required=True)
+    parser.add_argument("--llvm-o2", type=Path, required=True)
+    parser.add_argument("--assembly-o0", type=Path, required=True)
+    parser.add_argument("--assembly-o2", type=Path, required=True)
     parser.add_argument("--object", type=Path, action="append", required=True)
     args = parser.parse_args()
     require_text(args.preprocessed, ("int fib", "int sum", "int getint"))
     ast = json.loads(args.ast.read_text(encoding="utf-8"))
     if ast.get("kind") != "TranslationUnitDecl":
         raise SystemExit("AST root is not TranslationUnitDecl")
-    require_text(args.llvm, ("define", "@fib", "@main"))
-    require_text(args.assembly, ("fib:", "main:"))
+    require_text(args.llvm_o0, ("define", "@fib", "@main"))
+    require_text(args.llvm_o2, ("define", "@fib", "@main"))
+    require_text(args.assembly_o0, ("fib:", "main:"))
+    require_text(args.assembly_o2, ("fib:", "main:"))
+    if args.llvm_o0.read_bytes() == args.llvm_o2.read_bytes():
+        raise SystemExit("O0 and O2 LLVM IR unexpectedly match byte-for-byte")
+    if args.assembly_o0.read_bytes() == args.assembly_o2.read_bytes():
+        raise SystemExit("O0 and O2 assembly unexpectedly match byte-for-byte")
     for path in args.object:
         require_riscv_elf(path)
     print("pipeline artifacts: PASS")

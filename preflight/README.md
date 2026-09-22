@@ -79,8 +79,9 @@ object-generation portability.
 
 - `compiler_tour.i`：预处理结果 / preprocessed source;
 - `compiler_tour.ast.json`：Clang 抽象语法树（Abstract Syntax Tree, AST）;
-- `compiler_tour.from-source.ll`：前端生成的 LLVM IR;
-- `compiler_tour.from-source.s`：前端降低的 RV64GC 汇编;
+- `compiler_tour.O{0,2}.ll`：同一源码在两个受控优化级别生成的 LLVM IR;
+- `compiler_tour.O{0,2}.s`：同一源码在两个受控优化级别降低的 RV64GC 汇编;
+- `compiler_tour.from-source.{ll,s}`：兼容保留的 O0 副本 / compatibility O0 copies;
 - `compiler_tour.from-{source,ir,asm}.o`：三条路径的 RISC-V ELF 对象;
 - `runtime.rv64.o`：从仓库源码按当前 GNU/Linux ABI 重建的 SysY runtime;
 - `{source,ir,asm}.rv64`：与该 runtime 静态链接的 Linux 程序（仅完整环境）。
@@ -120,6 +121,54 @@ The handwritten IR intentionally retains target-independent `i32` semantics.
 The assembly follows the RISC-V ELF psABI integer calling convention, 16-byte
 stack alignment, and callee-saved register rules. The structural test reads the
 ELF header and requires `e_machine == EM_RISCV`, rather than trusting a filename.
+
+## 受控优化对照 / Controlled optimization comparison
+
+`pipeline` 从**同一份** `compiler_tour.sy` 分别以 `-O0` 和 `-O2` 生成文本 LLVM
+IR 与 RV64GC 汇编。`check_artifacts.py` 要求四份文件非空、包含预期函数，并要求
+每类 O0/O2 结果不逐字节相同。`optimization_metrics.py` 再以稳定 JSON 报告词法
+结构代理量（lexical structural proxies）：函数体内 IR 指令行、
+`alloca/load/store` 数量，以及汇编指令行近似数、指令助记符种类数和 directive
+行数。
+
+`pipeline` emits textual LLVM IR and RV64GC assembly at `-O0` and `-O2` from
+the **same** `compiler_tour.sy`. `check_artifacts.py` requires all four files to
+be nonempty, retain expected functions, and differ between O0 and O2.
+`optimization_metrics.py` emits stable JSON lexical structural proxies: IR
+instruction lines and `alloca/load/store` counts inside function bodies, plus
+approximate assembly instruction lines, distinct mnemonics, and directive
+lines.
+
+本机实际观测如下；数字取决于编译器版本，所以脚本输出才是复现实验时的权威记录：
+
+| 环境 / Environment | 指标 / Proxy | O0 | O2 | 结构变化 / Structural change |
+|---|---|---:|---:|---:|
+| Windows, Clang 22.1.8 | IR `alloca/load/store` 合计 | 59 | 24 | -35 (-59.3%) |
+| Windows, Clang 22.1.8 | IR 指令行 | 136 | 162 | +26 (+19.1%) |
+| Windows, Clang 22.1.8 | RV64 汇编指令行近似数 | 156 | 102 | -54 (-34.6%) |
+| Ubuntu 24.04, Clang 18.1.3 | IR `alloca/load/store` 合计 | 59 | 25 | -34 (-57.6%) |
+| Ubuntu 24.04, Clang 18.1.3 | IR 指令行 | 136 | 197 | +61 (+44.9%) |
+| Ubuntu 24.04, Clang 18.1.3 | RV64 汇编指令行近似数 | 156 | 104 | -52 (-33.3%) |
+
+更细看 Windows/Clang 22 的 O2：`alloca` 从 10 降为 1，`load` 从 29 降为
+11，`store` 从 20 降为 12；Ubuntu/Clang 18 的前三项分别为 1、11、13。
+这符合 mem2reg、标量替换和寄存器化减少显式内存流量的结构特征。然而 O2 的 IR
+指令行反而增加，说明内联、循环变换或控制流改写可以用更多 IR 表达更适合后端的
+程序。单看文本行数不能推出运行更快。
+
+Looking more closely, O2 under Windows/Clang 22 reduces `alloca` from 10 to 1,
+`load` from 29 to 11, and `store` from 20 to 12. The corresponding Ubuntu/
+Clang 18 counts are 1, 11, and 13. This is structurally consistent with
+promotion, scalar replacement, and registerization reducing explicit memory
+traffic. Yet O2 has *more* IR instruction lines, since inlining, loop
+transformation, or control-flow rewriting may use more IR to expose a form that
+is friendlier to the backend. Text size alone does not imply faster execution.
+
+> **解释边界 / Interpretation boundary:** 这些计数是静态文本代理，不是动态
+> 指令数、代码尺寸、延迟、吞吐量或真实性能测量。没有运行基准，因此这里不作
+> 任何性能提升声明。These counts are static textual proxies, not dynamic
+> instruction counts, code size, latency, throughput, or measured performance.
+> No benchmark was run, so no speedup claim is made.
 
 ## 进阶材料 / Advanced material
 

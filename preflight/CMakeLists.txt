@@ -39,19 +39,39 @@ add_custom_command(
   VERBATIM)
 
 add_custom_command(
-  OUTPUT "${GENERATED}/compiler_tour.from-source.ll"
+  OUTPUT "${GENERATED}/compiler_tour.O0.ll" "${GENERATED}/compiler_tour.from-source.ll"
   COMMAND "${CLANG_EXECUTABLE}" -x c -include "${BUILTIN_HEADER}" -S -emit-llvm -O0
-          "${SOURCE}" -o "${GENERATED}/compiler_tour.from-source.ll"
+          "${SOURCE}" -o "${GENERATED}/compiler_tour.O0.ll"
+  COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+          "${GENERATED}/compiler_tour.O0.ll" "${GENERATED}/compiler_tour.from-source.ll"
   DEPENDS "${SOURCE}" "${BUILTIN_HEADER}"
-  COMMENT "Emitting LLVM IR / 生成 LLVM IR"
+  COMMENT "Emitting unoptimized LLVM IR / 生成未优化 LLVM IR"
   VERBATIM)
 
 add_custom_command(
-  OUTPUT "${GENERATED}/compiler_tour.from-source.s"
-  COMMAND "${CLANG_EXECUTABLE}" ${RISCV_FLAGS} -x c -include "${BUILTIN_HEADER}" -S -O0
-          "${SOURCE}" -o "${GENERATED}/compiler_tour.from-source.s"
+  OUTPUT "${GENERATED}/compiler_tour.O2.ll"
+  COMMAND "${CLANG_EXECUTABLE}" -x c -include "${BUILTIN_HEADER}" -S -emit-llvm -O2
+          "${SOURCE}" -o "${GENERATED}/compiler_tour.O2.ll"
   DEPENDS "${SOURCE}" "${BUILTIN_HEADER}"
-  COMMENT "Lowering source to RV64GC assembly / 将源码降低为 RV64GC 汇编"
+  COMMENT "Emitting optimized LLVM IR / 生成优化 LLVM IR"
+  VERBATIM)
+
+add_custom_command(
+  OUTPUT "${GENERATED}/compiler_tour.O0.s" "${GENERATED}/compiler_tour.from-source.s"
+  COMMAND "${CLANG_EXECUTABLE}" ${RISCV_FLAGS} -x c -include "${BUILTIN_HEADER}" -S -O0
+          "${SOURCE}" -o "${GENERATED}/compiler_tour.O0.s"
+  COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+          "${GENERATED}/compiler_tour.O0.s" "${GENERATED}/compiler_tour.from-source.s"
+  DEPENDS "${SOURCE}" "${BUILTIN_HEADER}"
+  COMMENT "Lowering source to unoptimized RV64GC assembly / 将源码降低为未优化 RV64GC 汇编"
+  VERBATIM)
+
+add_custom_command(
+  OUTPUT "${GENERATED}/compiler_tour.O2.s"
+  COMMAND "${CLANG_EXECUTABLE}" ${RISCV_FLAGS} -x c -include "${BUILTIN_HEADER}" -S -O2
+          "${SOURCE}" -o "${GENERATED}/compiler_tour.O2.s"
+  DEPENDS "${SOURCE}" "${BUILTIN_HEADER}"
+  COMMENT "Lowering source to optimized RV64GC assembly / 将源码降低为优化 RV64GC 汇编"
   VERBATIM)
 
 add_custom_command(
@@ -81,7 +101,11 @@ add_custom_command(
 set(PIPELINE_OUTPUTS
   "${GENERATED}/compiler_tour.i"
   "${GENERATED}/compiler_tour.ast.json"
+  "${GENERATED}/compiler_tour.O0.ll"
+  "${GENERATED}/compiler_tour.O2.ll"
   "${GENERATED}/compiler_tour.from-source.ll"
+  "${GENERATED}/compiler_tour.O0.s"
+  "${GENERATED}/compiler_tour.O2.s"
   "${GENERATED}/compiler_tour.from-source.s"
   "${GENERATED}/compiler_tour.from-source.o"
   "${GENERATED}/compiler_tour.from-ir.o"
@@ -93,13 +117,26 @@ add_custom_target(
   COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_artifacts.py"
           --preprocessed "${GENERATED}/compiler_tour.i"
           --ast "${GENERATED}/compiler_tour.ast.json"
-          --llvm "${GENERATED}/compiler_tour.from-source.ll"
-          --assembly "${GENERATED}/compiler_tour.from-source.s"
+          --llvm-o0 "${GENERATED}/compiler_tour.O0.ll"
+          --llvm-o2 "${GENERATED}/compiler_tour.O2.ll"
+          --assembly-o0 "${GENERATED}/compiler_tour.O0.s"
+          --assembly-o2 "${GENERATED}/compiler_tour.O2.s"
           --object "${GENERATED}/compiler_tour.from-source.o"
           --object "${GENERATED}/compiler_tour.from-ir.o"
           --object "${GENERATED}/compiler_tour.from-asm.o"
   DEPENDS pipeline "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_artifacts.py"
   COMMENT "Checking stage artifacts / 检查各阶段产物"
+  VERBATIM)
+
+add_custom_target(
+  optimization_metrics
+  COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/optimization_metrics.py"
+          --llvm-o0 "${GENERATED}/compiler_tour.O0.ll"
+          --llvm-o2 "${GENERATED}/compiler_tour.O2.ll"
+          --assembly-o0 "${GENERATED}/compiler_tour.O0.s"
+          --assembly-o2 "${GENERATED}/compiler_tour.O2.s"
+  DEPENDS pipeline "${CMAKE_CURRENT_SOURCE_DIR}/scripts/optimization_metrics.py"
+  COMMENT "Reporting static optimization proxies / 报告静态优化代理指标"
   VERBATIM)
 
 add_custom_target(
@@ -115,12 +152,21 @@ add_test(NAME pipeline_artifacts
   COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_artifacts.py"
           --preprocessed "${GENERATED}/compiler_tour.i"
           --ast "${GENERATED}/compiler_tour.ast.json"
-          --llvm "${GENERATED}/compiler_tour.from-source.ll"
-          --assembly "${GENERATED}/compiler_tour.from-source.s"
+          --llvm-o0 "${GENERATED}/compiler_tour.O0.ll"
+          --llvm-o2 "${GENERATED}/compiler_tour.O2.ll"
+          --assembly-o0 "${GENERATED}/compiler_tour.O0.s"
+          --assembly-o2 "${GENERATED}/compiler_tour.O2.s"
           --object "${GENERATED}/compiler_tour.from-source.o"
           --object "${GENERATED}/compiler_tour.from-ir.o"
           --object "${GENERATED}/compiler_tour.from-asm.o")
 set_tests_properties(pipeline_artifacts PROPERTIES REQUIRED_FILES "${GENERATED}/compiler_tour.from-asm.o")
+add_test(NAME optimization_metrics
+  COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/optimization_metrics.py"
+          --llvm-o0 "${GENERATED}/compiler_tour.O0.ll"
+          --llvm-o2 "${GENERATED}/compiler_tour.O2.ll"
+          --assembly-o0 "${GENERATED}/compiler_tour.O0.s"
+          --assembly-o2 "${GENERATED}/compiler_tour.O2.s")
+set_tests_properties(optimization_metrics PROPERTIES REQUIRED_FILES "${GENERATED}/compiler_tour.O2.s")
 add_test(NAME advanced_structure
   COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_advanced.py"
           "${CMAKE_CURRENT_SOURCE_DIR}/advanced/add.mlir")
@@ -204,7 +250,7 @@ if(RISCV_GCC_EXECUTABLE)
   endif()
 endif()
 
-add_custom_target(verify DEPENDS check_pipeline check_advanced)
+add_custom_target(verify DEPENDS check_pipeline check_advanced optimization_metrics)
 if(TARGET native_verify)
   add_dependencies(verify native_verify)
 endif()
