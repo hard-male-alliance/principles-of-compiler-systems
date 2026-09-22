@@ -42,14 +42,14 @@ All generated artifacts are in `.temp/preflight-build/generated/`.
 | 预处理 / preprocessing | `bounded_factorial.i` | `FACTORIAL_LIMIT` 已替换为 `10`，注释和 `#define` 已消失 |
 | 词法 / lexing | `bounded_factorial.tokens.txt` | 关键字、标识符、常量、运算符如何成为 token 流 |
 | 语法/语义 / syntax & semantics | `bounded_factorial.ast.json` | 函数、`if`、`while`、调用与隐式转换的树结构 |
-| LLVM IR | `bounded_factorial.O{0,2}.ll` | O0 的显式内存操作与 O2 的 SSA/控制流变化 |
+| LLVM IR | `bounded_factorial.O{0,2}.ll` | 两者均显式声明 `riscv64-linux-gnu`/RV64 数据布局；比较 O0 的显式内存操作与 O2 的 SSA/控制流变化 |
 | 指令选择 / instruction selection | `bounded_factorial.O{0,2}.s` | LLVM 操作如何映射为 RV64GC 指令与伪指令 |
 | 汇编 / assembly | `{c,sysy,ir,asm}.rv64.o` | 四个输入表示都成为 ELF64 RISC-V 可重定位对象 |
-| 对象结构 / object structure | `c.object.txt` | ELF header、section 边界及代码/元数据分离 |
-| 符号 / symbols | `c.symbols.txt` | `factorial` 已定义，`getint`/`putint`/`putch` 尚未定义 |
-| 重定位 / relocations | `c.relocations.txt` | 外部调用为何要留给链接器修补地址 |
-| 机器码 / machine code | `c.disassembly.txt` | 指令字节、地址、基本块和符号标签的对应关系 |
-| 链接 / linking | `{c,sysy,ir,asm}.rv64` | runtime、启动代码与 libc 合并后的静态 Linux ELF |
+| 对象结构 / object structure | `{c,asm}.object.txt` | ELF header、section 边界及代码/元数据分离；`asm` 项直接来自手写汇编 |
+| 符号 / symbols | `{c,asm}.symbols.txt` | `factorial` 已定义，`getint`/`putint`/`putch` 尚未定义 |
+| 重定位 / relocations | `{c,asm}.relocations.txt` | 外部调用为何要留给链接器修补地址 |
+| 机器码 / machine code | `{c,asm}.disassembly.txt` | 指令字节、地址、基本块和符号标签的对应关系 |
+| 链接 / linking | `{c,sysy,ir,asm}.rv64`, `asm.executable.txt` | runtime、启动代码与 libc 合并后的静态 Linux ELF；手写汇编的链接证据含 ELF/程序头/符号 |
 | 执行 / execution | `native_equivalence`, `riscv_equivalence` | 共享 6 个输入是否逐字节得到相同输出 |
 
 共享向量覆盖 `-3, 0, 1, 5, 10, 20`，期望输出依次为 `1, 1, 1, 120,
@@ -59,6 +59,9 @@ All generated artifacts are in `.temp/preflight-build/generated/`.
 The shared vector covers `-3, 0, 1, 5, 10, 20`, expecting `1, 1, 1, 120,
 3628800, 3628800`. `optimization_metrics` reports textual structural metrics
 to locate O0/O2 representation changes; it is not a performance benchmark.
+Both generated LLVM IR files use the same `riscv64-linux-gnu`, `rv64gc`, and
+`lp64d` target contract as the adjacent assembly and object artifacts; the
+artifact check rejects a host-target IR regression.
 
 ## 展望 / Outlook
 

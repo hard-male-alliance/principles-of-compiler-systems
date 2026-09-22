@@ -55,7 +55,7 @@ add_custom_command(
 foreach(level IN ITEMS O0 O2)
   add_custom_command(
     OUTPUT "${GENERATED}/bounded_factorial.${level}.ll"
-    COMMAND "${CLANG_EXECUTABLE}" -std=c11 -S -emit-llvm -${level} "${C_SOURCE}"
+    COMMAND "${CLANG_EXECUTABLE}" ${RISCV_FLAGS} -std=c11 -S -emit-llvm -${level} "${C_SOURCE}"
             -o "${GENERATED}/bounded_factorial.${level}.ll"
     DEPENDS "${C_SOURCE}"
     COMMENT "Emitting ${level} LLVM IR / 生成 ${level} LLVM IR"
@@ -107,6 +107,24 @@ add_custom_command(
   COMMENT "Inspecting RV64 object structure / 检查 RV64 对象结构"
   VERBATIM)
 
+# 作者手写汇编的产物单独留证，避免用 C 后端生成物代替汇编器边界。
+# Preserve the handwritten assembly output separately instead of using a C-backend
+# object as a proxy for the assembler boundary.
+add_custom_command(
+  OUTPUT "${GENERATED}/asm.object.txt" "${GENERATED}/asm.symbols.txt"
+         "${GENERATED}/asm.relocations.txt" "${GENERATED}/asm.disassembly.txt"
+  COMMAND "${Python3_EXECUTABLE}" "${CAPTURE}" --output "${GENERATED}/asm.object.txt" --
+          "${LLVM_READOBJ_EXECUTABLE}" --file-headers --sections "${GENERATED}/asm.rv64.o"
+  COMMAND "${Python3_EXECUTABLE}" "${CAPTURE}" --output "${GENERATED}/asm.symbols.txt" --
+          "${LLVM_READOBJ_EXECUTABLE}" --symbols "${GENERATED}/asm.rv64.o"
+  COMMAND "${Python3_EXECUTABLE}" "${CAPTURE}" --output "${GENERATED}/asm.relocations.txt" --
+          "${LLVM_READOBJ_EXECUTABLE}" --relocations "${GENERATED}/asm.rv64.o"
+  COMMAND "${Python3_EXECUTABLE}" "${CAPTURE}" --output "${GENERATED}/asm.disassembly.txt" --
+          "${LLVM_OBJDUMP_EXECUTABLE}" --disassemble --symbolize-operands "${GENERATED}/asm.rv64.o"
+  DEPENDS "${GENERATED}/asm.rv64.o" "${CAPTURE}"
+  COMMENT "Inspecting handwritten-assembly RV64 object / 检查手写汇编的 RV64 对象"
+  VERBATIM)
+
 set(PIPELINE_OUTPUTS
   "${GENERATED}/bounded_factorial.i"
   "${GENERATED}/bounded_factorial.tokens.txt"
@@ -116,7 +134,9 @@ set(PIPELINE_OUTPUTS
   "${GENERATED}/c.rv64.o" "${GENERATED}/sysy.rv64.o"
   "${GENERATED}/ir.rv64.o" "${GENERATED}/asm.rv64.o"
   "${GENERATED}/c.object.txt" "${GENERATED}/c.symbols.txt"
-  "${GENERATED}/c.relocations.txt" "${GENERATED}/c.disassembly.txt")
+  "${GENERATED}/c.relocations.txt" "${GENERATED}/c.disassembly.txt"
+  "${GENERATED}/asm.object.txt" "${GENERATED}/asm.symbols.txt"
+  "${GENERATED}/asm.relocations.txt" "${GENERATED}/asm.disassembly.txt")
 add_custom_target(pipeline DEPENDS ${PIPELINE_OUTPUTS})
 
 set(CHECK_ARGUMENTS
@@ -130,6 +150,10 @@ set(CHECK_ARGUMENTS
   --symbols "${GENERATED}/c.symbols.txt"
   --relocations "${GENERATED}/c.relocations.txt"
   --disassembly "${GENERATED}/c.disassembly.txt"
+  --asm-object-info "${GENERATED}/asm.object.txt"
+  --asm-symbols "${GENERATED}/asm.symbols.txt"
+  --asm-relocations "${GENERATED}/asm.relocations.txt"
+  --asm-disassembly "${GENERATED}/asm.disassembly.txt"
   --object "${GENERATED}/c.rv64.o" --object "${GENERATED}/sysy.rv64.o"
   --object "${GENERATED}/ir.rv64.o" --object "${GENERATED}/asm.rv64.o")
 add_custom_target(check_pipeline
@@ -212,8 +236,18 @@ if(RISCV_GCC_EXECUTABLE)
               "${GENERATED}/${form}.rv64.o" "${GENERATED}/runtime.rv64.o" -o "${GENERATED}/${form}.rv64"
       DEPENDS "${GENERATED}/${form}.rv64.o" "${GENERATED}/runtime.rv64.o" VERBATIM)
   endforeach()
+  # 链接后证据明确区分 ET_EXEC/程序头与上游 ET_REL 对象。
+  # Post-link evidence distinguishes the executable/program headers from ET_REL inputs.
+  add_custom_command(
+    OUTPUT "${GENERATED}/asm.executable.txt"
+    COMMAND "${Python3_EXECUTABLE}" "${CAPTURE}" --output "${GENERATED}/asm.executable.txt" --
+            "${LLVM_READOBJ_EXECUTABLE}" --file-headers --program-headers --symbols
+            "${GENERATED}/asm.rv64"
+    DEPENDS "${GENERATED}/asm.rv64" "${CAPTURE}"
+    COMMENT "Inspecting linked handwritten-assembly executable / 检查手写汇编链接结果"
+    VERBATIM)
   add_custom_target(riscv_link DEPENDS "${GENERATED}/c.rv64" "${GENERATED}/sysy.rv64"
-    "${GENERATED}/ir.rv64" "${GENERATED}/asm.rv64")
+    "${GENERATED}/ir.rv64" "${GENERATED}/asm.rv64" "${GENERATED}/asm.executable.txt")
   if(QEMU_RISCV64_EXECUTABLE)
     add_custom_target(riscv_verify
       COMMAND "${Python3_EXECUTABLE}" "${VERIFY_PROGRAMS}"

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import struct
 from pathlib import Path
 
@@ -29,6 +30,19 @@ def require_riscv_elf(path: Path) -> None:
         raise SystemExit(f"wrong ELF machine {machine}, expected EM_RISCV (243): {path}")
 
 
+def require_riscv_ir(path: Path) -> None:
+    """要求 IR 声明 RV64 triple 与 64 位数据布局。 / Require an RV64 triple and 64-bit data layout."""
+    text = path.read_text(encoding="utf-8")
+    triple = re.search(r'^target triple = "([^"]+)"$', text, re.MULTILINE)
+    if triple is None or not triple.group(1).startswith("riscv64-"):
+        actual = triple.group(1) if triple else "missing"
+        raise SystemExit(f"wrong LLVM IR target triple {actual!r}, expected riscv64: {path}")
+    layout = re.search(r'^target datalayout = "([^"]+)"$', text, re.MULTILINE)
+    if layout is None or "p:64:64" not in layout.group(1):
+        actual = layout.group(1) if layout else "missing"
+        raise SystemExit(f"wrong LLVM IR data layout {actual!r}, expected 64-bit pointers: {path}")
+
+
 def main() -> int:
     """校验前端、双优化级输出与对象证据。 / Validate frontend, dual-level, and object evidence."""
     parser = argparse.ArgumentParser()
@@ -38,6 +52,10 @@ def main() -> int:
     parser.add_argument("--symbols", type=Path, required=True)
     parser.add_argument("--relocations", type=Path, required=True)
     parser.add_argument("--disassembly", type=Path, required=True)
+    parser.add_argument("--asm-object-info", type=Path, required=True)
+    parser.add_argument("--asm-symbols", type=Path, required=True)
+    parser.add_argument("--asm-relocations", type=Path, required=True)
+    parser.add_argument("--asm-disassembly", type=Path, required=True)
     parser.add_argument("--llvm-o0", type=Path, required=True)
     parser.add_argument("--llvm-o2", type=Path, required=True)
     parser.add_argument("--assembly-o0", type=Path, required=True)
@@ -51,11 +69,17 @@ def main() -> int:
         raise SystemExit("AST root is not TranslationUnitDecl")
     require_text(args.llvm_o0, ("define", "@factorial", "@main"))
     require_text(args.llvm_o2, ("define", "@factorial", "@main"))
+    require_riscv_ir(args.llvm_o0)
+    require_riscv_ir(args.llvm_o2)
     require_text(args.assembly_o0, ("factorial:", "main:"))
     require_text(args.assembly_o2, ("factorial:", "main:"))
     require_text(args.symbols, ("factorial", "getint", "putint"))
     require_text(args.relocations, ("getint", "putint", "putch"))
     require_text(args.disassembly, ("<factorial>", "<main>"))
+    require_text(args.asm_object_info, ("Format: elf64-littleriscv", "Arch: riscv64", "Sections ["))
+    require_text(args.asm_symbols, ("factorial", "main", "getint", "putint"))
+    require_text(args.asm_relocations, ("getint", "putint", "putch"))
+    require_text(args.asm_disassembly, ("<factorial>", "<main>"))
     if args.llvm_o0.read_bytes() == args.llvm_o2.read_bytes():
         raise SystemExit("O0 and O2 LLVM IR unexpectedly match byte-for-byte")
     if args.assembly_o0.read_bytes() == args.assembly_o2.read_bytes():
