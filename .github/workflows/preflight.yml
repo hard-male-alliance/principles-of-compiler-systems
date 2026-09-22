@@ -1,0 +1,53 @@
+name: Compiler preflight
+
+on:
+  push:
+    paths:
+      - "preflight/**"
+      - "lib/**"
+      - ".github/workflows/preflight.yml"
+  pull_request:
+    paths:
+      - "preflight/**"
+      - "lib/**"
+      - ".github/workflows/preflight.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Ubuntu full RV64GC execution
+            os: ubuntu-24.04
+            full_riscv: true
+          - name: Windows portable stages
+            os: windows-2025
+            full_riscv: false
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout / 检出
+        uses: actions/checkout@v4
+
+      # Ubuntu 使用发行版维护的交叉 libc、链接器与 QEMU，避免下载未固定的二进制。
+      # Ubuntu uses distro-maintained cross libc, linker, and QEMU instead of ad-hoc binaries.
+      - name: Install RV64GC toolchain / 安装 RV64GC 工具链
+        if: matrix.full_riscv
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends clang gcc-riscv64-linux-gnu libc6-dev-riscv64-cross qemu-user
+
+      - name: Configure / 配置
+        working-directory: preflight
+        run: cmake --preset ci
+
+      - name: Generate, link, and verify / 生成、链接并验证
+        working-directory: preflight
+        run: cmake --build --preset ci --target verify
