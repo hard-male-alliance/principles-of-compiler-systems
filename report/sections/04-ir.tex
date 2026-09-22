@@ -1,16 +1,15 @@
-\section{从带类型结构到 LLVM IR}
+\section{LLVM IR 与优化}
 \label{sec:ir}
 
-\subsection{初始 IR：语句变成基本块与显式效果}
+\subsection{控制流与内存效应的显式化}
 
-LLVM IR 是带类型、基于 SSA 的低级中间表示；函数由基本块组成，块以终结指令结束，分支只能指向块标签\cite{llvm-langref-2026}。前端输入带类型 AST，输出不再含 WhileStmt 或“乘后赋值”这种源语句，而是整数比较、分支、算术、调用以及必要的内存效果。
+LLVM IR 采用带类型的 SSA 表示，函数由基本块组成，每个基本块以控制流终结指令结束\cite{llvm-langref-2026}。在 \code{-O0} 产物中，可寻址局部变量通常对应 \code{alloca} 栈对象，初始化和赋值形成 \code{store}，表达式取值形成 \code{load}。源级 \code{while} 被降低为条件、循环体和退出基本块，循环体至条件块的分支构成回边。此处的 \code{alloca} 表示抽象栈对象，具体栈偏移仍由目标代码生成决定。
 
-未经优化的常见生成策略为每个可寻址局部量建立 \code{alloca} 栈槽：初始化成为 \code{store}，取值成为 \code{load}。因此一次源级赋值可能扩成多个 IR 指令。\code{while} 被拆为条件块、循环体块和退出块；“继续循环”由循环体末尾回到条件块的边构成。这里仍然没有最终栈偏移：\code{alloca} 表示抽象栈对象，后端才决定其具体帧布局。
+参考 LLVM IR 直接以 SSA 形式表示阶乘递推。清单~\ref{lst:phi} 中两个 $\phi$ 操作依据实际执行的前驱边选择输入定义：首次迭代从 \code{entry} 取得 2 和 1，后续迭代从 \code{body} 取得更新值。支配关系和支配边界为一般 SSA 构造中的合流位置提供理论基础\cite{cytron-et-al-ssa-1991}。案例的循环回边要求 \code{factor} 与 \code{result} 在循环头合并初始值和迭代值。
 
-作者书写的 IR 则直接表达同一递推。其核心如下：
-\begin{lstlisting}[caption={作者 IR 中阶乘循环的 SSA 形态。},label={lst:phi}]
-entry:
-  br label %loop
+\begin{center}
+\begin{minipage}{0.92\linewidth}
+\begin{lstlisting}[caption={阶乘循环在参考 LLVM IR 中的 SSA 表示。},label={lst:phi}]
 loop:
   %factor = phi i32 [ 2, %entry ], [ %next_factor, %body ]
   %result = phi i32 [ 1, %entry ], [ %next_result, %body ]
@@ -20,42 +19,30 @@ body:
   %next_result = mul i32 %result, %factor
   %next_factor = add i32 %factor, 1
   br label %loop
-done:
-  ret i32 %result
 \end{lstlisting}
+\end{minipage}
+\end{center}
 
-两个 $\phi$ 节点不是“并行执行的机器指令”，而是在控制流汇合处按前驱边选择定义：第一次从 \code{entry} 取得 2 和 1，以后从 \code{body} 取得更新值。SSA 理论以支配关系和支配边界说明何处需要合并定义\cite{cytron-et-al-ssa-1991}；就本例而言，回边使 \code{factor} 和 \code{result} 的当前值必须在循环头合流。源代码的可变变量因此被重述为无歧义的定义--使用关系。
+函数调用在 IR 中同时编码返回类型、目标符号和参数类型。例如 \code{call i32 @factorial(i32 \%bounded)} 返回 32 位整数，\code{putint} 与 \code{putch} 则声明为 \code{void}。夹取条件分别采用 \code{icmp slt} 和 \code{icmp sgt}，循环条件采用 \code{icmp sle}，明确表达有符号整数比较。参考 IR 的 \code{mul i32} 未附加 \code{nsw} 标志，因而没有引入额外的无溢出假设；已声明输入路径上的乘积由上界保证有效。
 
-\subsection{调用与有符号语义}
+\subsection{SSA 构造与标量优化}
 
-\code{call i32 @factorial(i32 \%bounded)} 同时编码返回类型、被调符号和参数类型；\code{putint}、\code{putch} 声明为返回 \code{void}。\code{icmp slt}、\code{sgt} 与 \code{sle} 明确采用有符号比较，这与 SysY \code{int} 的本例解释相符。乘法用 \code{mul i32}；因为输入先被限制到 10，实际路径不会溢出。本文没有给乘法附加 \code{nsw}，因而也不把超出已声明路径的额外优化前提偷偷写入 IR。
+LLVM 优化流水线由分析和变换通道组合，其默认构成随版本、目标和优化级别演化\cite{llvm-passes-2026,llvm-newpm-2026}。案例中的局部标量地址不逃逸，使标量提升能够把栈对象的读写改写为 SSA 定义和使用；常量传播、控制流简化及内联进一步改变基本块和调用边界。由此产生的文本结构差异以语义保持的程序变换为前提。
 
-\code{clamp\_input} 在作者 IR 中把第二个条件写成 \code{icmp sgt} 加 \code{select}。它和源代码的第二个 \code{if} 在可观察结果上相同，但控制表示不同：\code{select} 选择值而不跳到两个返回块。这说明跨层追踪应盯住语义事实，而不是要求节点或行号一一对应。
-
-\subsection{从内存形态到 SSA：优化是有前提的遗忘}
-
-LLVM 的优化流水线由分析与变换通道组合，默认组合会随版本和优化级别演化\cite{llvm-passes-2026,llvm-newpm-2026}。对本例，局部标量提升可在地址未逃逸时把栈槽改写为 SSA 值；常量传播和 CFG 简化可折叠已知条件、合并块；内联可消除调用边界，也可能把被调函数的控制流复制到调用点。关键机制不是“文本更短”，而是证明某一区别不影响语言允许观察的行为后将其删除。
-
-表~\ref{tab:irobs} 是 WSL 上 Clang 18.1.3 对完整模块的实际计数。\code{-O2} 的三类内存指令（\code{alloca}、\code{load}、\code{store}）全部消失，说明局部内存状态已提升或消除；总指令从 56 减至 30，说明本次优化流水线在该产物中同时收缩了控制与数据操作。这个数值依赖目标和版本，不能外推为优化器的固定性质。计数口径是打印 IR 中的指令行，不包含标签、声明和元数据。
-
-具体产物比计数更有解释力：\code{-O2} 中，\code{clamp\_input} 的上界判断成为 \code{llvm.umin.i32}，再与负数比较通过 \code{select} 合成结果；\code{main} 则直接出现同样的夹取逻辑和带两个 $\phi$ 节点的阶乘循环，说明两个辅助调用已在该调用点内联。原函数定义仍被保留，因为它们具有外部可见性。这里同时发生了“删除栈槽”“改变控制表示”和“复制被调语义”，不能只用某一种通道概括。
+表~\ref{tab:structure} 合并报告 IR 与汇编层的结构测量。RV64 目标下，IR 指令数由 56 降至 30，\code{alloca/load/store} 从 9/13/13 降至 0/0/0，反映出局部内存状态的提升与整体结构收缩。汇编近似指令行由 77 降至 45，而助记符种类由 13 增至 15，表明文本规模和操作种类并不单调对应。这些静态指标用于刻画表示结构，性能解释不在其测量范围内。
 
 \begin{table}[tb]
-\caption{Clang 18.1.3 的 IR 结构观测（完整模块）。}
-\label{tab:irobs}
-\centering
-\begin{tabular}{@{}lrrrr@{}}
+\caption{Clang 18.1.3 在 RV64 目标上的表示结构测量。}
+\label{tab:structure}
+\centering\small
+\begin{tabular}{@{}lrrrrrr@{}}
 \toprule
-优化级别 & IR 指令 & \code{alloca} & \code{load} & \code{store}\\
+级别 & IR 指令 & \code{alloca} & \code{load} & \code{store} & 汇编行 & 助记符\\
 \midrule
-\code{-O0} & 56 & 9 & 13 & 13\\
-\code{-O2} & 30 & 0 & 0 & 0\\
+\code{-O0} & 56 & 9 & 13 & 13 & 77 & 13\\
+\code{-O2} & 30 & 0 & 0 & 0 & 45 & 15\\
 \bottomrule
 \end{tabular}
 \end{table}
 
-这些数值只描述结构，不能推出动态指令数、延迟、吞吐量或能耗。要作性能判断还需固定机器、输入、重复测量并解释代码布局等混杂因素。本文只由它回答一个更窄的问题：源级可变局部量在两个优化观察点如何被编码。
-
-\subsection{表示边界}
-
-IR 仍有无限制编号的 SSA 值和目标相对独立的整数操作；它不知道 \code{result} 最终驻留哪个物理寄存器，也未决定调用距离和函数地址。源级循环、局部变量名、宏及大部分语法已经不可恢复。后端接收的是“必须计算什么及其数据/控制依赖”，下一步把它约束到有限寄存器、具体指令和 ABI。
+优化后的 IR 仍使用不限数量的 SSA 名称和目标相对独立的整数操作。目标后端接收其数据依赖、控制流和内存语义，并将这些信息映射到有限物理寄存器、具体指令和调用约定。

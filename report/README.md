@@ -1,6 +1,6 @@
-# LNCS 中文实验报告
+# LNCS 中文论文
 
-本目录是“预备工作——了解你的编译器”的论文工程。正文采用 Springer 官方 `llncs` 文档类和 `splncs04` BibTeX 样式；两文件来自 CTAN 的 Springer `llncs` 2.26 发行包（CC BY 4.0），上游说明见 `LLNCS-README.md`。
+本目录包含综述性案例研究《跨表示的编译语义保持：从 SysY 源程序到 RV64 ELF 可执行文件》。正文采用 Springer 官方 `llncs` 文档类和 `splncs04` BibTeX 样式；两文件来自 CTAN 的 Springer `llncs` 2.26 发行包（CC BY 4.0），上游说明见 `LLNCS-README.md`。
 
 ## 构建
 
@@ -11,17 +11,11 @@ cd report
 latexmk -r latexmkrc main.tex
 ```
 
-输出为 `build/main.pdf`。清理命令：
-
-```sh
-latexmk -r latexmkrc -C main.tex
-```
-
-也可在提供 POSIX `make` 的环境中执行 `make` / `make clean`。请勿使用 `geometry` 或手工修改页边距覆盖 LNCS 版式。
+输出为 `build/main.pdf`。清理命令为 `latexmk -r latexmkrc -C main.tex`。也可在提供 POSIX `make` 的环境中执行 `make` / `make clean`。请勿使用 `geometry` 或手工修改页边距覆盖 LNCS 版式。
 
 ## 实验证据与提交
 
-论文中的实验结果来自 `preflight/` 的版本化程序、测试驱动与结构检查；可复现命令列于论文附录。提交前唯一需要人工填写的内容是两位作者的姓名、学号及真实分工。填写后应从干净检出重新构建并检查日志与最终 PDF，不要直接修改构建目录中的派生文件。
+论文中的实验结果来自版本化案例程序、参考 LLVM IR、参考 RV64 汇编及相应结构报告。完整生成和验证命令保存在项目工件文档中，不嵌入论文正文。正式提交前应将匿名作者元数据替换为课程要求的信息，并从干净检出重新构建、检查日志和最终 PDF。
 
 ## 上游文件校验
 

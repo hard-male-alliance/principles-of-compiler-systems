@@ -1,36 +1,45 @@
 % !TeX program = xelatex
 \documentclass[a4paper,runningheads]{llncs}
 \usepackage[UTF8,scheme=plain,fontset=fandol]{ctex}
-\usepackage{amsmath,booktabs,tabularx,graphicx,xcolor,listings,url}
+\usepackage{amsmath,booktabs,tabularx,graphicx,xcolor,listings,url,float}
 \usepackage[hidelinks]{hyperref}
-\lstdefinestyle{code}{basicstyle=\ttfamily\footnotesize,columns=fullflexible,frame=single,numbers=left,numberstyle=\scriptsize\color{gray},breaklines=true,showstringspaces=false,keepspaces=true,xleftmargin=1.4em,framexleftmargin=1.1em}
-\lstset{style=code}
+\lstdefinestyle{evidence}{
+  basicstyle=\ttfamily\footnotesize,
+  columns=fullflexible,
+  frame=none,
+  numbers=none,
+  breaklines=false,
+  showstringspaces=false,
+  keepspaces=true,
+  aboveskip=0.6\baselineskip,
+  belowskip=0.5\baselineskip,
+  xleftmargin=1.2em
+}
+\lstset{style=evidence}
 \newcommand{\code}[1]{\texttt{#1}}
-\title{深入理解编译系统：一个 SysY 程序从源代码到 RISC-V 可执行文件}
-\titlerunning{一个 SysY 程序的编译系统纵向解剖}
-\author{成员甲（姓名与学号）\inst{1} \and 成员乙（姓名与学号）\inst{1}}
-\authorrunning{成员甲与成员乙}
-\institute{编译系统原理课程实验组}
+\title{跨表示的编译语义保持：从 SysY 源程序到 RV64 ELF 可执行文件}
+\titlerunning{从 SysY 源程序到 RV64 ELF 可执行文件}
+\author{作者 A\inst{1} \and 作者 B\inst{1}}
+\authorrunning{作者 A 与作者 B}
+\institute{匿名单位}
 \emergencystretch=2em
 \begin{document}
 \maketitle
 \begin{abstract}
-“编译器把源代码变成机器码”掩盖了各工具之间最重要的接口。本文把一个有界迭代阶乘 SysY 程序作为同一条语义线索，依次考察预处理文本、带类型抽象语法树、LLVM 中间表示、RV64GC 汇编、ELF 可重定位对象、静态可执行文件与 Linux 进程映像。核心观点是：编译系统是一组\emph{表示契约}；每个边界既遗忘已经无用的源形式，又显式加入下一消费者所需的事实。实例把赋值和循环追踪为内存读写与静态单赋值数据依赖，把函数调用追踪为 RV64 psABI 寄存器约定、符号和重定位，再把链接后的节视图追踪为加载时的段视图。Clang 18.1.3 的观测显示，\code{-O0} 与 \code{-O2} 产物在结构上显著不同，但结构计数不等于性能。源程序、作者书写的 LLVM IR 和 RV64 汇编在六个边界输入上均为 6/6 等价；这是针对声明输入的行为检查而非形式证明。最后以 MLIR 的多级方言和渐进式降低说明：编译设计的关键不是尽快降低，而是在最后一个需要某种抽象的变换完成后再丢弃它。
-\keywords{编译系统 \and 表示契约 \and LLVM IR \and 静态单赋值 \and RISC-V \and ELF \and MLIR}
+编译系统通过多种表示及其接口逐步实现源程序语义，而各阶段的信息保留与显式化方式决定了后续分析、代码生成和装载的基础。本文采用纵向案例研究方法，将一个有界迭代阶乘 SysY 程序从预处理文本和带类型抽象语法树，追踪至 LLVM IR、RV64GC 汇编、ELF 可重定位对象、静态可执行文件及 Linux 进程映像。分析表明，源级赋值与循环在 LLVM IR 中分别表现为显式内存效应和 SSA 数据依赖；函数调用在 RV64 psABI、符号表和重定位记录中获得目标相关实现；链接后的节布局进一步转换为装载器使用的段映射。Clang 18.1.3 的 RV64 产物中，\code{-O0}/\code{-O2} LLVM IR 指令数为 56/30，汇编近似指令行为 77/45。SysY 源、参考 LLVM IR 与参考 RV64 汇编在六个边界输入上的输出和退出状态均一致。该验证限于给定输入和 QEMU 用户态执行环境，不构成形式等价证明。多级中间表示的讨论进一步表明，抽象层级的保留期限应由后续变换所需信息决定。
+\keywords{编译系统 \and 表示演化 \and LLVM IR \and 静态单赋值 \and RISC-V \and ELF \and MLIR}
 \end{abstract}
-\section*{作者分工}
-成员甲负责前端与 LLVM IR 的材料整理和初稿；成员乙负责 RV64、ELF、MLIR 展望与排版。双方共同确定案例语义、复核六个输入的行为、整理文献并终审全文。
+\section*{作者贡献}
+作者 A：概念化、前端与 LLVM IR 分析、实验验证；作者 B：RV64 与 ELF 分析、可视化、论文排版。两位作者共同完成案例设计、文献核查、结果解释与论文审阅。
 \input{sections/01-introduction}
 \input{sections/02-case}
 \input{sections/03-frontend}
 \input{sections/04-ir}
 \input{sections/05-rv64}
 \input{sections/06-elf}
-\input{sections/07-validation-outlook}
-\input{sections/08-conclusion}
-\appendix
-\renewcommand{\theHsection}{appendix.\Alph{section}}
-\input{sections/a-reproducibility}
+\input{sections/07-validation}
+\input{sections/08-mlir}
+\input{sections/09-conclusion}
 \bibliographystyle{splncs04}
 \bibliography{references}
 \end{document}

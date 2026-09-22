@@ -1,49 +1,36 @@
-\section{从 LLVM IR 到 RV64 机器接口}
+\section{RV64 代码生成与调用约定}
 \label{sec:rv64}
 
-\subsection{合法化、指令选择与寄存器分配}
+\subsection{指令选择与寄存器分配}
 
-目标无关代码生成器把 IR 经过调用约定降低、指令合法化（legalization）、指令选择（instruction selection）、寄存器分配和指令调度等步骤，最终打印汇编或发射对象字节\cite{llvm-codegen-2026,llvm-globalisel-2026}。这些步骤是概念分工，不保证每个目标或优化级别都采用相同内部算法。
+LLVM 目标无关代码生成框架包含调用约定降低、合法化（legalization）、指令选择（instruction selection）、寄存器分配和指令调度等环节\cite{llvm-codegen-2026,llvm-globalisel-2026}。这些环节把 IR 操作约束到 RV64 的有限寄存器集合与可编码指令，同时保持 32 位 SysY 整数的运算效果。
 
-IR 的 \code{i32 mul} 在 RV64 上要维持 32 位结果语义。作者汇编用 \code{mulw t0,t0,t1} 计算低 32 位并符号扩展到 64 位寄存器；循环变量更新用 \code{addiw}。\code{icmp sle} 与分支则表现为 \code{bgt t1,a0,.Lfactorial\_done}：后端交换比较方向，把“若继续则进循环体”改成“若已结束则跳出”。这是同一控制谓词的目标化布局，不是语义改变。
+参考汇编中的 \code{mulw} 计算 32 位乘积并将结果符号扩展至 64 位寄存器，\code{addiw} 以相同宽度更新循环变量。IR 的 \code{icmp sle} 与条件分支被布局为 \code{bgt t1,a0,.Ldone}：比较方向反转，使顺序路径进入循环体、条件成立时跳转至退出标签。清单~\ref{lst:rv} 仅保留与该映射相关的指令。
 
-\begin{lstlisting}[caption={作者 RV64 汇编中的阶乘函数。},label={lst:rvfact}]
+\begin{center}
+\begin{minipage}{0.92\linewidth}
+\begin{lstlisting}[caption={参考 RV64 汇编中的阶乘循环。},label={lst:rv}]
 factorial:
     li      t0, 1
     li      t1, 2
-.Lfactorial_test:
-    bgt     t1, a0, .Lfactorial_done
+.Ltest:
+    bgt     t1, a0, .Ldone
     mulw    t0, t0, t1
     addiw   t1, t1, 1
-    j       .Lfactorial_test
-.Lfactorial_done:
+    j       .Ltest
+.Ldone:
     mv      a0, t0
     ret
 \end{lstlisting}
+\end{minipage}
+\end{center}
 
-\code{li}、\code{mv}、\code{j} 和 \code{ret} 是汇编伪指令（pseudo-instruction）：它们改善可读性，由汇编器选成一条或多条真实编码。因此，汇编文本行数不能自动等于对象中的机器指令数。RISC-V ISA 规定真实指令效果，汇编手册和工具约定处理伪指令；本文在编码层以反汇编为准，而非把助记符外观当作硬件事实。
+\code{li}、\code{mv}、\code{j} 与 \code{ret} 属于汇编伪指令（pseudo-instruction），汇编器根据操作数把它们展开为一条或多条真实编码。因此，表~\ref{tab:structure} 的汇编行数描述文本结构，编码层分析则依据对象反汇编。
 
-\subsection{RV64 psABI：独立编译仍能相互调用}
+\subsection{RV64 psABI 约束}
 
-LP64D 调用约定以 \code{a0--a7} 传递整数参数，以 \code{a0}/\code{a1} 承载至多两个寄存器返回值；本例的单个 \code{int} 返回值只使用 \code{a0}。\code{ra} 保存返回地址；\code{sp} 是栈指针并须在过程执行期间保持 16 字节对齐；\code{t0--t6} 为调用者保存临时寄存器；\code{s0--s11} 为被调用者保存\cite{riscv-psabi-1.0}。因此 \code{factorial} 从 \code{a0} 读入 $n$，在 \code{t0}/\code{t1} 中维护循环状态，再把结果移回 \code{a0}。
+RV64 ISA 定义机器操作语义，RISC-V psABI 则规定独立编译单元之间的调用接口及 ELF 约定\cite{riscv-isa-2026,riscv-psabi-1.0}。LP64D 调用约定使用 \code{a0--a7} 传递整数参数与返回值，\code{ra} 保存返回地址，\code{sp} 维护调用栈；\code{t0--t6} 为调用者保存寄存器，\code{s0--s11} 为被调用者保存寄存器。
 
-叶函数 \code{factorial} 不调用别的函数，可直接 \code{ret}；\code{main} 连续调用五个函数，必须保护自己的返回地址。作者汇编把栈指针减 16，在 \code{8(sp)} 保存 \code{ra}，返回前逆向恢复。这 16 字节而非任意大小来自调用边界的栈对齐约束。它也说明“有局部变量”不必然意味着“有栈槽”：这里寄存器足以承载局部状态，栈帧的主要任务是保存返回地址。
+\code{factorial} 从 \code{a0} 读取参数，在 \code{t0} 和 \code{t1} 中维护循环状态，并将结果写回 \code{a0}。该函数没有进一步调用，因而无需保存 \code{ra}。\code{main} 包含多个调用，在 16 字节对齐的栈帧中保存和恢复返回地址。局部阶乘状态完全驻留于寄存器，说明源级局部变量与目标栈对象之间不存在固定的一一对应关系。
 
-\subsection{结构观测与不能推出的结论}
-
-同一 Clang 18.1.3 环境中，生成汇编的近似指令行由 \code{-O0} 的 77 降到 \code{-O2} 的 45，出现的助记符种类由 13 增至 15。前一变化可能来自栈访问和冗余搬运减少，后一变化说明优化会选用更多样的操作；“种类更多”不等于程序更复杂或更慢。近似计数排除标签和大多数指示符，却仍包含伪指令，因此只适于描述文本结构。
-
-\begin{table}[tb]
-\caption{RV64 汇编的结构观测，不是性能测量。}
-\centering
-\begin{tabular}{@{}lrrl@{}}
-\toprule
-级别 & 近似指令行 & 助记符种类 & 可支持的判断\\
-\midrule
-\code{-O0} & 77 & 13 & 保留较多显式搬运/帧操作\\
-\code{-O2} & 45 & 15 & 文本更短但指令选择更多样\\
-\bottomrule
-\end{tabular}
-\end{table}
-
-到汇编层，类型信息已大幅弱化：\code{a0} 本身不携带“这是 SysY int”的标签；\code{mulw} 的宽度及调用点约定共同保存所需行为。符号名仍没有最终地址，而 \code{call getint} 甚至尚未决定具体位移。汇编器的任务正是把这些文本承诺编码成节、符号和重定位。
+目标汇编保留函数标签及外部调用名称，但尚无最终虚拟地址。后续汇编阶段把指令和伪指令编码为对象字节，并以符号表和重定位记录表达跨对象地址关系。
