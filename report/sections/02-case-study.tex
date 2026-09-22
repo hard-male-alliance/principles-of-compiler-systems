@@ -1,0 +1,214 @@
+\section{案例与旅程地图：有界前缀截断点积}
+\label{sec:case-study}
+
+\subsection{规范源程序}
+
+代码清单~\ref{lst:sysy-case} 是全文唯一的语义案例。SysY 运行时函数无需在源文件中声明；
+\texttt{getint} 返回一个整数，\texttt{putint} 输出整数，\texttt{putch(10)} 输出换行。
+数组是局部对象，两个初始化列表都恰好给出 8 个元素。\texttt{clipped\_dot} 的数组形参接收
+实参数组首元素的地址，而标量参数按值传递；这一源级区别会在 LLVM 的指针/整数参数和 RISC-V
+调用约定中继续显现。
+
+\begin{lstlisting}[language=C,caption={规范性 SysY 案例。},label={lst:sysy-case}]
+int clipped_dot(int a[], int b[], int n, int lo, int hi) {
+  int acc = 0;
+  int i = 0;
+  while (i < n) {
+    int term = a[i] * b[i];
+    if (term < lo) {
+      term = lo;
+    } else {
+      if (term > hi) {
+        term = hi;
+      }
+    }
+    acc = acc + term;
+    i = i + 1;
+  }
+  return acc;
+}
+
+int main() {
+  int a[8] = {-4, 1, 7, 3, 9, -2, 6, 5};
+  int b[8] = { 2,-3, 1, 4,-1,  5, 2, 3};
+  int n = getint();
+  if (n < 0) {
+    n = 0;
+  } else {
+    if (n > 8) {
+      n = 8;
+    }
+  }
+  putint(clipped_dot(a, b, n, -8, 12));
+  putch(10);
+  return 0;
+}
+\end{lstlisting}
+
+程序先把输入 $n$ 映射为
+\[
+  k=\operatorname{clip}(n,0,8)=\min(8,\max(0,n)),
+\]
+再计算
+\begin{equation}
+  D(n)=\sum_{i=0}^{k-1}\operatorname{clip}(a_i b_i,-8,12),
+  \qquad \operatorname{clip}(x,l,h)=\min(h,\max(l,x)).
+  \label{eq:clipped-dot}
+\end{equation}
+若 $k=0$，空和为 0。两个固定数组的逐项乘积和截断结果为
+\[
+(-8,-3,7,12,-9,-10,12,15)
+\longmapsto
+(-8,-3,7,12,-8,-8,12,12).
+\]
+因此长度 $0$ 到 $8$ 的前缀和依次为
+\[
+0,-8,-11,-4,8,0,-8,4,16.
+\]
+这串数字是独立于任何实现的短预言机：后续 C 观察载体、手写 LLVM IR 与手写 RV64 汇编若对
+相同输入得到相同结果，是必要证据；但三者也可能共享同一个错误，故仍须以式
+\eqref{eq:clipped-dot} 推导的已知答案为准。
+
+\subsection{为何这个小程序足够深}
+
+选择案例的标准不是“看起来像应用”，而是每一个源结构能否在后续层次产生值得解释的对象。
+表~\ref{tab:feature-payoff} 显示，同一个循环已经覆盖课程要求的算术、赋值、分支、循环、函数与
+运行时调用，同时自然引出数组地址、控制流汇合和外部符号；没有必要再附加递归或浮点数来制造
+第二条叙事线。
+
+\begin{table}[t]
+\caption{源程序结构与后续可观察机制。}
+\label{tab:feature-payoff}
+\centering
+\small
+\begin{tabular}{p{3.0cm}p{8.5cm}}
+\hline
+源结构 & 它使什么机制可见 \\
+\hline
+两个 \texttt{int[8]} & 聚合初始化、连续布局、数组到地址的传递、GEP、4 字节有符号加载与缩放寻址 \\
+\texttt{n} 的上下界 & 有序比较、控制流汇合、边界证明，以及优化后分支或选择指令的变化 \\
+\texttt{a[i]*b[i]} & 下标表达式的类型、两次地址计算、\texttt{i32} 乘法和 RV64 字运算 \\
+乘积截断 & 两次互斥条件及三条路径，IR 中分支/\texttt{select}，目标上的条件分支或无分支序列 \\
+\texttt{i} 与 \texttt{acc} & 源变量赋值、\texttt{-O0} 栈槽，以及优化后循环携带的 SSA 值和 $\phi$ 节点 \\
+五参数用户函数 & 函数类型、数组地址与标量实参、ABI 参数寄存器和潜在内联 \\
+三个运行时调用 & 外部声明、目标文件未定义符号、调用重定位、静态库成员抽取和可观察 I/O \\
+\hline
+\end{tabular}
+\end{table}
+
+案例还刻意避开两个会污染论证的陷阱。第一，所有数组访问都满足
+$0\leq i<k\leq8$：长度先被限制，循环条件后才允许下标求值，因而不依赖越界后的偶然内存
+布局。第二，固定数据使所有乘积至多为 $15$、每项截断到 $[-8,12]$，八项和位于
+$[-64,96]$，远在 32 位有符号整数范围内。于是 C 观察载体和 SysY 都没有有符号溢出歧义，
+LLVM 优化器也不需要借助未定义行为才能解释结果。这里的界不是测试数据的事后描述，而是案例
+语义契约的一部分。
+
+逐项截断还提供了一个有价值的反例。普通点积可在无溢出及允许重结合的条件下视作归约；但
+\emph{截断发生在每个乘积之后}，而不是每次累加之后，所以仍有
+$\sum_i \operatorname{clip}(a_i b_i)$ 的普通加法规约结构。若改成每次对累加器饱和截断，混合
+正负项会令运算不具结合性，向量化或并行树形归约就不能直接保持次序语义。这个差别说明优化
+合法性来自精确程序含义，而非“代码长得像点积”。
+
+\subsection{同一程序的多种身份}
+
+全文会出现四种材料，必须按身份区分：
+\begin{enumerate}
+  \item \textbf{规范 SysY 源文件}规定要实现的语义；它不含 C 头文件与预处理指令。
+  \item \textbf{C 观察载体}用 C17 手工镜像同一算法，并增加运行时声明、包含、宏、输入数组的
+        \texttt{const} 限定和文档注释；它让 Clang 处理案例的 C 兼容子集，但不是第二个语义
+        规范。两份源文件存在漂移风险，因而必须共享预言机并审查下述精确差异。
+  \item \textbf{编译器生成物}（AST、\texttt{-O0}/\texttt{-O2} IR、RV64 汇编）记录指定工具版本
+        的决策；它们是观察资料，不是作者声称手写的成果。
+  \item \textbf{手写 LLVM IR 与 RV64 汇编}分别独立实现式~\eqref{eq:clipped-dot}；它们通过同一
+        预言机接受检验，但有限测试不把这种对应提升为数学证明。
+\end{enumerate}
+
+SysY 与 C 的相似性使观察载体可行，却不能推出两种语言处处等价。SysY 对常量表达式、数组
+维度、运行时函数的隐式可用性和浮点字面量另有规则；库存 Clang 解析的是 C，而非完整 SysY。
+我们只在这个明确的整数兼容子集内借用 Clang 作为\emph{观察仪器}。这相当于用示波器观察一个
+接口，而不是宣称示波器定义了接口本身。
+
+\subsection{从字符到进程的路线图}
+
+图~\ref{fig:pipeline-map} 把旅程画成产物图，而不是一排含混的工具名。实线表示工具变换，虚线
+表示作者依据相同语义契约进行的转写。中间节点并不保证每次都落盘：记号、AST、机器 IR 常驻
+内存，只有借助调试/观察选项才投影成文本。
+
+\begin{figure}[t]
+\centering
+\fbox{\begin{minipage}{0.94\linewidth}\small
+规范 \texttt{clipped\_dot.sy}
+$\dashrightarrow$ C 观察载体
+$\xrightarrow{\texttt{-E}}$ 预处理记号流
+$\xrightarrow{\text{Parser+Sema}}$ 带类型 AST
+$\xrightarrow{\text{IRGen}}$ LLVM IR
+$\xrightarrow{\text{优化}}$ 优化 IR
+$\xrightarrow{\text{后端}}$ RV64 汇编/机器表示
+$\xrightarrow{\text{汇编}}$ ELF 可重定位目标文件
+$\xrightarrow{\text{链接+SysY 运行时}}$ RV64 可执行文件
+$\xrightarrow{\text{加载/执行}}$ \texttt{stdout} 与退出状态。
+
+与此同时，规范源程序分别虚线转写为手写 \texttt{.ll} 与手写 \texttt{.S}；二者从相应层次
+汇入同一汇编、链接和执行验证路径。
+\end{minipage}}
+\caption{单一案例的产物与出处。箭头表示责任边界，不表示每一步必有独立进程或文件。}
+\label{fig:pipeline-map}
+\end{figure}
+
+驱动层对这张图还有一个重要修正。\texttt{clang -ccc-print-phases} 展示的是输入、预处理、编译、
+后端、汇编等概念动作；\texttt{clang -\#\#\#} 展示动作绑定后实际准备运行的命令。在本项目记录
+的 Clang 22.1.8 Windows 探针中，前者给出五个动作，而后者仅给出一个含集成汇编的
+\texttt{clang -cc1 -emit-obj} 作业。该观察足以否定“一框必定一进程”，却不意味着所有平台、
+目标和版本都会采取同样融合方式。停止选项提供了有意物化边界的手段：\texttt{-E} 停在预处理
+文本，\texttt{-fsyntax-only} 停在语法/语义检查，\texttt{-S -emit-llvm} 给出文本 LLVM IR，
+\texttt{-S} 给出汇编，\texttt{-c} 给出目标文件\cite{front-clang-options,front-clang-toolchain}。
+
+\subsection{跨层追踪表与行为预言机}
+
+表~\ref{tab:cross-layer} 预告后文反复追踪的事实。值得注意的是，向后走不等于不断“翻译同一个
+变量名”。变量名、宏拼写甚至函数边界都可能消失；持续存在的是数据依赖、控制条件、调用约定
+和最终行为等语义关系。
+
+\begin{table}[t]
+\caption{同一源事实跨越表示边界时的载体。}
+\label{tab:cross-layer}
+\centering
+\small
+\begin{tabularx}{\textwidth}{p{1.8cm}p{2.5cm}p{2.9cm}X}
+\hline
+源事实 & 前端/AST & LLVM IR & RV64、目标文件与运行 \\
+\hline
+$n$ 限制到 $[0,8]$ & 带类型比较、赋值、汇合 & \texttt{icmp}+分支或 \texttt{select} & 比较/分支或无分支选择；不留外部依赖 \\
+\texttt{a[i]*b[i]} & 两个数组下标及整型乘法 & 扩展索引、GEP、两次加载、\texttt{mul} & 缩放地址、\texttt{lw}、\texttt{mulw}；栈对象地址最终布局 \\
+\texttt{term} 截断 & 有序 \texttt{if/else if} & 比较、分支或选择 & 条件分支或最值序列；不留外部依赖 \\
+\texttt{i,acc} & 循环内赋值 & 栈读写或 $\phi$ 值 & 寄存器/溢出槽和回边；地址最终固定 \\
+用户函数调用 & 五实参、数组转地址 & 指针/标量 \texttt{call} 或内联 & \texttt{a0--a4}、调用重定位；本地定义被解析 \\
+\texttt{getint} & 运行时函数调用 & 外部声明与调用 & 未定义符号、调用重定位；从运行时库选择定义 \\
+\hline
+\end{tabularx}
+\end{table}
+
+端到端检验采用表~\ref{tab:oracle} 的精确预言机。标准输出不做换行归一化，而是逐字节比较；
+退出状态应为 0。链接的 \code{sylib.c} 还会通过 \code{after\_main} 析构函数向标准错误写出精确的
+\code{TOTAL: 0H-0M-0S-0us\textbackslash n}，验证器把它作为运行时诊断单独核验，而不与点积结果混合。
+负数、零、单元素、内部前缀、完整长度和超长输入分别覆盖长度截断的两端、零次/一次/多次循环以及全部数组元素。
+
+\begin{table}[t]
+\caption{由式~\eqref{eq:clipped-dot} 独立推导的已知答案。}
+\label{tab:oracle}
+\centering
+\small
+\begin{tabular}{lrrrrrr}
+\hline
+输入 \texttt{n} & $-1$ & $0$ & $1$ & $4$ & $8$ & $10$ \\
+\hline
+限制后长度 $k$ & 0 & 0 & 1 & 4 & 8 & 8 \\
+标准输出 & \texttt{0\textbackslash n} & \texttt{0\textbackslash n} & \texttt{-8\textbackslash n} & \texttt{8\textbackslash n} & \texttt{16\textbackslash n} & \texttt{16\textbackslash n} \\
+\hline
+\end{tabular}
+\end{table}
+
+“六行全对”的结论必须保持克制：它表明四种形式通过了这组六个观察点，也连同汇编器、链接器、
+运行时和执行环境检查了真实路径；它不证明所有 32 位输入上的语义等价。相反，IR 验证器只证明
+结构满足 IR 规则，也不证明它实现式~\eqref{eq:clipped-dot}。结构验证与行为验证关注不同错误类，
+二者互补，不能互相替代。

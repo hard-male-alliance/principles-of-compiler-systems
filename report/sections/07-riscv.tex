@@ -1,0 +1,117 @@
+\section{从语义到 RV64GC：指令、约定与手写实现}
+\label{sec:riscv}
+
+LLVM IR 仍以无限个虚拟寄存器、显式类型和基本块表达程序；一旦进入目标代码，编译器便必须同时兑现三类契约：指令集体系结构（instruction set architecture, ISA）规定处理器能做什么，平台应用二进制接口（platform application binary interface, psABI）规定独立编译的函数如何合作，而汇编器语法规定这些决定如何被记录为目标文件。本节沿用案例 \texttt{clipped\_dot}，解释手写文件 \texttt{preflight/asm/clipped\_dot.S} 中每一类选择为何成立，而不是把汇编当成需要背诵的指令表。
+
+\subsection{目标三元组、ISA 与 ABI 是三个不同问题}
+
+本文实验的目标是 Linux 上的 \texttt{riscv64}，指令集合取 RV64GC，调用约定取 LP64D。RV64 表示整数寄存器宽度 \(\mathrm{XLEN}=64\)；字母 G 是 \(I,M,A,F,D,\mathrm{Zicsr},\mathrm{Zifencei}\) 的约定缩写，C 则另行表示 16 位压缩指令扩展\cite{bin-riscv-unpriv,bin-riscv-naming}。因此 ``RV64G'' 并不自动包含 C；本实验目标明确为 RV64GC，这也与目标文件 ELF 标志中的 \texttt{EF\_RISCV\_RVC} 一致。
+
+ISA 名称只回答“可能出现哪些机器指令”，ABI 名称才回答“\texttt{int} 多宽、参数放在哪里、栈如何对齐”。LP64D 中 \texttt{long} 和指针为 64 位，C 的 \texttt{int} 仍为 32 位，并采用硬件双精度浮点调用约定。即使本案例没有浮点计算，目标文件仍用 \texttt{EF\_RISCV\_FLOAT\_ABI\_DOUBLE} 声明其可与 LP64D 对象互操作；这不是声称每个函数都执行 D 扩展指令。psABI 对 RV64G 推荐 LP64D，但 ISA 与 ABI 仍不可混为一谈\cite{bin-riscv-psabi}。
+
+RISC-V 的小型基础 ISA 加可选扩展设计并非只为教学整洁：它试图把软件生态所需的稳定基线与实现创新解耦，Waterman 的设计论文系统讨论了这一取舍\cite{bin-waterman-riscv}，开放 ISA 的生态论证也见 Asanovi{\'c} 与 Patterson\cite{bin-asanovic-riscv}。这些工作提供设计动机；本报告关于编码和 ABI 的具体判断仍以已批准规范和实物为准。
+
+\begin{table}[t]
+\caption{案例可见的 RV64GC 子集及其语义责任}
+\label{tab:rvext}
+\centering
+\small
+\begin{tabular}{p{.12\linewidth}p{.30\linewidth}p{.48\linewidth}}
+\hline
+扩展 & 代表指令 & 在案例中的作用\\
+\hline
+I & \texttt{lw}, \texttt{sw}, \texttt{add}, \texttt{slli}, 分支 & 指针寻址、32 位元素访存、循环与截断判断\\
+M & \texttt{mulw} & 计算两个 SysY \texttt{int} 的低 32 位乘积\\
+A/F/D & 本函数未出现 & 目标允许原子与浮点指令；“允许”不等于“必用”\\
+C & 例如 16 位 \texttt{li}/\texttt{j}/\texttt{ret} 编码 & 缩短常用指令；不改变 ABI 可观察语义\\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{64 位机器上的 32 位 SysY 整数}
+
+最容易被“寄存器都是 64 位”误导的是整数语义。RV64I 的 W 类指令只在低 32 位运算，再把第 31 位符号扩展到 64 位；\texttt{lw} 同样符号扩展，\texttt{lwu} 才零扩展\cite{bin-riscv-unpriv}。psABI 还要求窄于 XLEN 的整数按其类型先扩至 32 位，再符号扩至 XLEN。于是案例核心并非随意选取 \texttt{mulw}/\texttt{addw}：
+
+\begin{verbatim}
+slli t2, t1, 2       # i * sizeof(int)
+add  t3, a0, t2      # 64-bit pointer arithmetic
+lw   t4, 0(t3)       # load i32, sign-extend to XLEN
+...
+mulw t4, t4, t5     # low-32 product, then sign-extend
+addw t0, t0, t4      # SysY i32 accumulation
+\end{verbatim}
+
+这里有两条并行的数据通路：地址是 64 位，故数组下标乘 4 后以普通 \texttt{add} 加到指针；数组元素和累加器是 32 位，故使用 \texttt{lw}、\texttt{mulw} 和 \texttt{addw}。若把 \texttt{lw} 换成 \texttt{ld}，一次会越界读取两个元素且改变值；若把 W 类算术换成 64 位算术，则在发生 32 位回绕后可能改变后续有符号比较。后者未必会在小测试数据上暴露，却已不再忠实实现源语言。
+
+案例采用有符号 \texttt{blt t4,a3} 与 \texttt{blt a4,t4} 判断闭区间 \([lo,hi]\)。RISC-V 没有隐式条件码寄存器；分支直接比较两个通用寄存器。因此 LLVM IR 的 \texttt{icmp slt} 与 \texttt{br} 可以合并成一条分支，而需要把布尔值保存下来时才常见 \texttt{slt}。数组长度先在 \texttt{main} 中裁剪到 \([0,8]\)，核心函数只处理这个明确前置条件：这是用数据不变量消除循环内边界特判，而不是让每次迭代重复防御。
+
+需要指出，C 对有符号整数溢出的语义与 SysY 教学实现常采用的模 \(2^{32}\) 机器行为并非天然相同。本文手写汇编和手写 LLVM IR 以课程案例的 i32 可观察行为为契约；若声称它对任意严格 ISO C 程序等价，还需把溢出前提写进证明，而不能由 \texttt{mulw} 的硬件回绕倒推出源语言许可。
+
+\subsection{伪指令不是处理器指令}
+
+伪指令（pseudoinstruction）是汇编器接受的便利拼写。它可能映成一条真实指令，也可能展开为带重定位的指令序列\cite{bin-riscv-asm}。在当前对象反汇编中，源文件开头的两个 \texttt{li} 被编码为 16 位指令，\texttt{mv} 归约为加零类操作，\texttt{ret} 归约为以 \texttt{ra} 为目标的 \texttt{jalr}。这表明“源汇编一行”等于“机器指令一条”并非不变量。
+
+\begin{table}[t]
+\caption{案例相关伪指令及典型含义；最终展开必须以对象反汇编为准}
+\label{tab:pseudo}
+\centering
+\small
+\begin{tabular}{p{.18\linewidth}p{.34\linewidth}p{.38\linewidth}}
+\hline
+拼写 & 典型展开 & 解释边界\\
+\hline
+\texttt{li rd,imm} & 一条或多条立即数指令 & 依赖常数、XLEN 与 C 扩展，不能固定说成 \texttt{lui+addi}\\
+\texttt{mv rd,rs} & \texttt{addi rd,rs,0} 或压缩等价物 & 复制寄存器\\
+\texttt{j L} & \texttt{jal x0,L} 或 \texttt{c.j} & 不写返回地址\\
+\texttt{ret} & \texttt{jalr x0,0(ra)} 或 \texttt{c.jr ra} & 由 \texttt{ra} 返回\\
+\texttt{call f} & \texttt{auipc ra,...; jalr ra,...} & 携带 \texttt{R\_RISCV\_CALL\_PLT}，可由链接器松弛\\
+\texttt{sext.w} & \texttt{addiw rd,rs,0} & 恢复 i32 符号扩展不变量\\
+\hline
+\end{tabular}
+\end{table}
+
+尤其不应手算固定的远调用位移写入 \texttt{jal}。\texttt{call symbol} 把“现在不知道 symbol 在哪里”编码为 \texttt{AUIPC+JALR} 以及 \texttt{R\_RISCV\_CALL\_PLT} 重定位；若最终距离落入约 \(\pm1\) MiB 的 JAL 范围，链接器还可以把它缩成一条 \texttt{jal}\cite{bin-riscv-psabi}. 这种写法既可重定位又允许优化，是汇编层应保留给链接器的信息，而不是额外开销。
+
+\subsection{寄存器约定是跨函数的真实接口}
+
+RV64 有 32 个整数寄存器。ABI 名称比编号更能表达所有权：\texttt{a0--a7} 传递前八个整数参数，\texttt{a0--a1} 也承载返回值；\texttt{t0--t6} 和 \texttt{a0--a7} 是调用者保存（caller-saved），\texttt{s0--s11} 是被调用者保存（callee-saved）；\texttt{ra} 保存返回地址，\texttt{sp} 是栈指针；\texttt{gp} 和 \texttt{tp} 不是普通临时寄存器\cite{bin-riscv-psabi}。
+
+\texttt{clipped\_dot(a,b,n,lo,hi)} 的五个参数因此自然落在 \texttt{a0--a4}，结果回到 \texttt{a0}。它是叶函数（leaf function），不调用别的函数，也不占用必须保存的 s 寄存器，故无需创建栈帧或保存 \texttt{ra}。省略函数序言不是违反 ABI，反而说明 ABI 约束的是可观察状态，不是固定模板。
+
+\texttt{main} 是非叶函数：每次 \texttt{call} 都会改写 \texttt{ra}，所以入口先执行
+
+\begin{verbatim}
+addi sp, sp, -80
+sd   ra, 72(sp)
+...
+ld   ra, 72(sp)
+addi sp, sp, 80
+ret
+\end{verbatim}
+
+80 是 16 的倍数，使所有调用边界仍满足 psABI 的 128 位栈对齐要求。低 64 字节保存两个各含 8 个 i32 的数组，\([64,72)\) 是未使用的对齐/布局余量，\([72,80)\) 保存 \texttt{ra}。栈向低地址增长；不存在可依赖的 x86-64 式红区（red zone）。本函数无需帧指针；若使用规范帧记录，\texttt{s0/fp} 仍属被调用者保存，典型地指向入口栈指针，但优化代码可省略它。调试器应依靠 DWARF 调用帧信息（call frame information, CFI），而非凭视觉猜测每个函数都有同一序言。
+
+一个容易忽略的活跃性问题是：\texttt{main} 在调用 \texttt{getint} 前已经把数组写到内存，而没有把需要跨调用存活的值留在 t/a 寄存器里。调用返回后只依赖 \texttt{sp} 和内存数组，符合调用者保存规则。随后调用 \texttt{clipped\_dot}，返回值已经位于 \texttt{a0}，正好直接成为 \texttt{putint} 的第一个参数；这既少一条移动，也没有制造特殊分支。
+
+\subsection{指令之外：汇编指示构造目标文件}
+
+汇编指示（assembler directive）不由 CPU 执行，它们为汇编器声明节、符号属性、对齐和目标兼容性。\texttt{.text} 选择代码输入节；\texttt{.globl} 赋予跨对象可见的全局绑定；\texttt{.type f,@function} 与 \texttt{.size f,.-f} 让 ELF 工具知道函数类别与范围；\texttt{.attribute arch} 记录架构能力；空的 \texttt{.note.GNU-stack} 参与声明无需可执行栈。RISC-V 上 \texttt{.align n} 表示按 \(2^n\) 字节对齐，为避免跨架构语义差异，生产汇编更宜显式采用 \texttt{.p2align} 或 \texttt{.balign}\cite{bin-riscv-asm}。
+
+当前手写文件没有全局可变数据，数组直接位于栈中，因而对象的 \texttt{.data} 和 \texttt{.bss} 大小均为零。这是源设计导致的事实，而非 ELF 不支持它们。若需常量字符串，可切换到 \texttt{.section .rodata}，用 \texttt{.asciz} 发射零结尾字节；若需零初始化全局对象，可在 \texttt{SHT\_NOBITS} 的 \texttt{.bss} 中以 \texttt{.zero} 预留空间。把这些元数据与指令并排书写的意义，将在下一节的对象证据中显现。
+
+\subsection{从源程序逐点核对手写实现}
+
+图~\ref{fig:asm-map} 给出核心函数的控制流对应。循环头先判 \(i\ge n\)；两个数组用同一个字节偏移；乘积依次经过下界、上界判断，三条路径汇合到唯一累加块，再递增 \(i\)。这种形状刻意让“特殊情况”成为对 \texttt{term} 的普通定义，累加与回边只有一份。
+
+\begin{figure}[t]
+\centering
+\begin{tabular}{c@{\quad$\longrightarrow$\quad}c@{\quad$\longrightarrow$\quad}c}
+\texttt{.Lloop} & 载入并 \texttt{mulw} & 下/上界判断\\
+\(\uparrow\) & & \(\downarrow\)\\
+\texttt{addiw i,1} & \(\longleftarrow\) \texttt{addw acc,term} & \texttt{.Llower/.Lupper}\\
+\end{tabular}
+\caption{\texttt{clipped\_dot} 的汇编控制流。三种截断结果在唯一累加块汇合。}
+\label{fig:asm-map}
+\end{figure}
+
+对输入 \(n=8\)，逐项乘积为 \((-8,-3,7,12,-9,-10,12,15)\)，截断到 \([-8,12]\) 后为 \((-8,-3,7,12,-8,-8,12,12)\)，和为 16。这个手算预言比“程序能运行”更强：它同时约束分支方向、数组步长、32 位乘加、参数次序与 I/O 接口。汇编仍不是最终地址已定的程序；下一节将检查汇编器如何把局部可确定事实编码成字节，把其余事实显式延期。

@@ -1,0 +1,55 @@
+% !TeX program = xelatex
+% LLNCS survey entry point / LLNCS 综述主文件
+\documentclass[a4paper,runningheads]{llncs}
+
+\input{preamble}
+
+\title{深入理解编译系统：\\一个 SysY 截断点积从源代码到 RISC-V 进程映像}
+\titlerunning{深入理解编译系统}
+\author{组员一（学号）\inst{1} \and 组员二（学号）\inst{1}}
+\authorrunning{组员一与组员二}
+\institute{课程班级与小组（提交前填写）}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+编译系统不是把一段文本一次性“翻译”为机器码的黑箱，而是一条由表示、契约与工具共同构成的语义细化链。本文采用纵向实例研究，以一个长度有界的 SysY 整数截断点积为唯一主线，逐层追踪预处理记号、带类型抽象语法树、LLVM 中间表示、优化后的控制流与数据流、RV64GC 汇编、ELF 可重定位目标文件、静态链接映像以及 Linux 进程映像。案例同时覆盖数值运算、数组寻址、赋值、条件分支、循环、函数和 SysY 运行时调用；手写 LLVM IR 与手写 RISC-V 汇编通过同一组边界输入检验可观察行为。本文特别区分驱动程序展示的逻辑阶段与工具链实际启动的作业，区分优化产物中可观察的变化与对具体 Pass 的推断，并以符号、重定位及 ABI 解释“调用一个函数”如何跨越编译、汇编、链接和装载边界。实验还揭示了预编译 SysY RISC-V 归档与 Debian GNU/Linux C 运行环境之间的库 ABI 不匹配，由此说明“指令集相同”并不足以保证可链接。最后，以 MLIR 多方言和渐进式降低为中心，把 AscendNPU IR VecAdd 文档放回其实际抽象层级，并综述验证编译、翻译验证、等式饱和、反馈驱动优化、JIT/AOT 与可复现构建等方向。全文的核心结论是：理解编译器，关键不在背诵阶段名称，而在于识别每一层保存了什么语义、引入了什么约束，又把哪些决定推迟给下一层。
+
+\keywords{编译系统 \and SysY \and LLVM IR \and RISC-V \and ELF \and MLIR \and 渐进式降低}
+\end{abstract}
+
+\section*{作者分工}
+\begin{table}[H]
+  \centering
+  \caption{两位组员的工作分工（提交前用真实姓名与学号替换占位符）。}
+  \label{tab:contributions}
+  \begin{tabularx}{\textwidth}{@{}p{0.20\textwidth}X@{}}
+    \toprule
+    成员 & 主要贡献 \\
+    \midrule
+    组员一（学号） & 案例与实验设计；SysY、预处理、前端与 LLVM IR 分析；可复现实验实现与核验。\\
+    组员二（学号） & RISC-V、ELF、链接与装载分析；MLIR/AscendNPU IR 调研；图表、参考文献与版式核验。\\
+    共同完成 & 研究问题界定、跨层语义映射、结果解释、全文审阅与最终提交。\\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\input{sections/01-introduction}
+\input{sections/02-case-study}
+\input{sections/03-source-frontend}
+\input{sections/04-llvm-ir}
+\input{sections/05-optimization}
+\input{sections/06-backend}
+\input{sections/07-riscv}
+\input{sections/08-assembler-elf}
+\input{sections/09-linker-loader}
+\input{sections/10-validation}
+\input{sections/11-mlir}
+\input{sections/12-frontiers}
+\input{sections/13-conclusion}
+
+\bibliographystyle{splncs04}
+\bibliography{bib/frontend,bib/llvm-backend,bib/binary,bib/validation,bib/mlir-frontiers}
+
+\end{document}

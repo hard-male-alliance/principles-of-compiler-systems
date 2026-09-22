@@ -1,0 +1,178 @@
+\section{LLVM IR：把控制、数据与内存变成显式契约}
+\label{sec:llvm-ir}
+
+前端完成语法与语义分析以后，源程序中许多“理所当然”的事实必须被改写为一种优化器可以检查、组合并最终交给后端的表示。本节以固定案例 \texttt{clipped\_dot} 为主线：两个长度为 8 的常量数组分别为
+\(
+[-4,1,7,3,9,-2,6,5]
+\)
+与
+\(
+[2,-3,1,4,-1,5,2,3]
+\)，输入的前缀长度先被约束到 \([0,8]\)，逐项乘积再被截断到 \([-8,12]\) 后求和。这个例子很小，却同时暴露数组寻址、循环、条件选择、归约和运行时调用，足以展示 LLVM IR 的核心设计。
+
+LLVM 中间表示（LLVM Intermediate Representation, LLVM IR）既是内存中的对象图，也是可读的 \texttt{.ll} 汇编格式和紧凑的 \texttt{.bc} 位码格式；三者表达同一组语义。它是一种带类型、面向静态单赋值（Static Single Assignment, SSA）的低层表示，而不是“跨平台汇编”这一简单比喻所能概括的接口\cite{llvm-lattner2004,llvm-langref}。它之所以能连接多种语言与多种目标，不是因为删除了目标信息，而是因为把语言语义压缩为少数精确定义的操作，同时用 \texttt{target triple}、\texttt{target datalayout}、属性和元数据保留后续阶段真正需要的约束。
+
+\subsection{从 Module 到 SSA 值：读懂表示层次}
+
+表~\ref{tab:ir-hierarchy} 给出阅读一份 IR 时应采用的从外到内顺序。这里的每一层都不是排版单位，而有可由验证器检查的结构约束。
+
+\begin{table}[t]
+  \centering
+  \caption{LLVM IR 的表示层次与关键不变量}
+  \label{tab:ir-hierarchy}
+  \small
+  \begin{tabular}{p{0.16\textwidth}p{0.34\textwidth}p{0.40\textwidth}}
+    \hline
+    单位 & 在案例中的含义 & 关键约束与常见误解 \\
+    \hline
+    模块（Module） & 目标信息、两个数组常量、运行时声明以及两个函数定义的容器 & 近似一个翻译单元，但可被链接合并；模块并非天然“与目标无关” \\
+    类型（Type） & \texttt{i1} 条件、\texttt{i32} 元素、\texttt{i64} 索引、\texttt{[8 x i32]} 数组与不透明 \texttt{ptr} & \texttt{ptr} 不携带指向类型；访问类型由 \texttt{load}/\texttt{store}/GEP 指定 \\
+    函数（Function） & \texttt{clipped\_dot} 定义以及 \texttt{getint}/\texttt{putint}/\texttt{putch} 声明 & 调用约定、参数/返回类型和 ABI 相关属性必须与调用点一致 \\
+    基本块（Basic Block） & \texttt{entry}、\texttt{loop}、\texttt{body}、\texttt{exit} & 单入口直线指令序列；必须以一个终结指令结束 \\
+    控制流图（Control-Flow Graph, CFG） & 分支为边，基本块为结点 & \texttt{phi} 的每个来值对应一条前驱边，而非普通的顺序赋值 \\
+    SSA 值 & 参数、常量和带 \texttt{\%} 名称的指令结果 & 每个结果只定义一次；SSA 约束值，不约束可变内存 \\
+    \hline
+  \end{tabular}
+\end{table}
+
+手写模块开头是一个目标契约，而不是装饰性页眉：
+
+\begin{lstlisting}[basicstyle=\ttfamily\scriptsize]
+source_filename = "clipped_dot.handwritten.ll"
+target datalayout = "e-m:e-p:64:64-i64:64-i128:128-n32:64-S128"
+target triple = "riscv64-unknown-linux-gnu"
+
+@a.init = private constant [8 x i32] [...], align 16
+@b.init = private constant [8 x i32] [...], align 16
+\end{lstlisting}
+
+\texttt{target triple} 选择 RISC-V 64 位 Linux 目标；数据布局（data layout）字符串中的 \texttt{e} 表示小端，\texttt{p:64:64} 表示默认地址空间中的指针大小与 ABI 对齐均为 64 位，\texttt{S128} 表示自然栈对齐为 128 bit。优化器会用这些信息计算数组步长、聚合体填充和合法对齐，因此手工把 x86-64 的布局复制到 RISC-V 模块会造成真实的错编译风险。这里的字符串是预备实现明确写入的 RV64 布局；一般实现应让目标机器组件生成它，而不应凭记忆拼接\cite{llvm-datalayout}。
+
+\texttt{[8 x i32]} 是第一类数组类型；全局量带 \texttt{private constant}，因而只在模块内可见且不可写。现代 LLVM 使用不透明指针（opaque pointer）：参数只写 \texttt{ptr \%a}，而不再写历史教程中的 \texttt{i32*}\cite{llvm-opaque-pointers}。这并未抹掉访存类型：\texttt{load i32} 表示读 4 byte，\texttt{getelementptr i32} 以 \texttt{i32} 的分配大小计算步长。
+
+\subsection{函数、基本块与控制流：循环是一张图}
+
+\texttt{clipped\_dot} 的签名为
+\begin{lstlisting}[basicstyle=\ttfamily\scriptsize]
+define i32 @clipped_dot(ptr readonly %a, ptr readonly %b,
+                        i32 %n, i32 %lo, i32 %hi) {
+\end{lstlisting}
+返回值和五个形参都是 SSA 定义。两个 \texttt{readonly} 参数属性说明函数不会通过对应指针写内存；它不是一般意义上的“常量指针”，也没有自动承诺指针非空、指向足够大对象或彼此不别名。属性是优化器可依赖的证明前提，错误标注会扩大允许变换的集合，从而把前端错误放大为错误代码。
+
+手写 CFG 可以压缩画为：
+\begin{center}
+\ttfamily
+entry $\longrightarrow$ loop $\xrightarrow{\%more}$ body $\longrightarrow$ loop\\
+\hspace{39mm}$\searrow_{\neg\%more}$ exit
+\end{center}
+其中 \texttt{entry} 只跳转一次；\texttt{loop} 同时是循环头和条件块；\texttt{body} 完成一次迭代并形成回边；\texttt{exit} 返回。每个块最后分别是 \texttt{br} 或 \texttt{ret} 终结指令。源代码中的 \texttt{while} 不是 IR 操作码：它被分解为 CFG 拓扑以及一个支配关系（dominance）约束。
+
+循环头的两条 \texttt{phi} 指令揭示了 SSA 的实质：
+\begin{lstlisting}[basicstyle=\ttfamily\scriptsize]
+loop:
+  %i   = phi i32 [ 0, %entry ], [ %i.next, %body ]
+  %acc = phi i32 [ 0, %entry ], [ %acc.next, %body ]
+  %more = icmp slt i32 %i, %n
+  br i1 %more, label %body, label %exit
+\end{lstlisting}
+第一次从 \texttt{entry} 到达时，\texttt{\%i} 和 \texttt{\%acc} 都取 0；以后从 \texttt{body} 回来时分别取本轮末尾的 \texttt{\%i.next} 与 \texttt{\%acc.next}。因此 \texttt{phi} 是按“进入该块的边”选值，而不是在块开头按某个未说明的顺序执行的赋值。其来值数必须与前驱相匹配，且同一基本块的所有 \texttt{phi} 必须位于非 \texttt{phi} 指令之前\cite{llvm-langref}。从算法上看，这正是用支配边界构造 SSA 时在汇合点放置合流函数的情形\cite{llvm-cytron1991}。
+
+还应区分“SSA 中的值不可变”和“程序没有可变状态”。\texttt{\%i} 只定义一次，但不同迭代沿回边得到新的 \texttt{\%i.next}。与此同时，\texttt{alloca} 创建的对象、全局对象和通过指针可达的数组仍然能够被反复 \texttt{load}/\texttt{store}；内存不是一个普通 SSA 标量。优化器若要移动或删除访存，必须另外证明别名与内存效应。
+
+\subsection{逐行对照：从源语义到手写 IR}
+
+表~\ref{tab:source-ir-map} 不追求逐字符对应，而追踪每条源语义在 IR 中由什么机制承担。这种对照比展示整份转储更重要，因为它让“缺少了什么信息”和“新增了什么义务”都可见。
+
+\begin{table}[t]
+  \centering
+  \caption{\texttt{clipped\_dot} 内核的源语义到手写 IR 映射}
+  \label{tab:source-ir-map}
+  \scriptsize
+  \begin{tabular}{p{0.28\textwidth}p{0.34\textwidth}p{0.29\textwidth}}
+    \hline
+    源语句/语义 & IR 片段 & 显式化的事实 \\
+    \hline
+    \texttt{int acc=0; int i=0;} & 两个 \texttt{phi} 的 \texttt{[0, \%entry]} & 初值属于入口边 \\
+    \texttt{while (i<n)} & \texttt{icmp slt} 后接条件 \texttt{br} & 有符号比较以及真假后继 \\
+    \texttt{a[i]} & \texttt{sext}; \texttt{getelementptr}; \texttt{load i32} & 索引宽度、元素步长、地址计算与读内存分离 \\
+    \texttt{a[i]*b[i]} & \texttt{mul i32} & 本例手写 IR 未声称 \texttt{nsw}/\texttt{nuw} \\
+    \texttt{if (term<lo) term=lo;} & \texttt{icmp slt} 与第一个 \texttt{select} & 无副作用条件赋值可表示为值选择 \\
+    \texttt{else if (term>hi)} & 对 \texttt{\%lowered} 做 \texttt{icmp sgt} 与第二个 \texttt{select} & 先下界、再上界的顺序仍被保留 \\
+    \texttt{acc=acc+term;} & \texttt{add i32 \%acc, \%term}，再经回边进入 \texttt{phi} & 循环携带的归约状态 \\
+    \texttt{i=i+1;} & \texttt{add i32 \%i, 1}，再经回边进入 \texttt{phi} & 归纳变量更新 \\
+    \texttt{return acc;} & \texttt{ret i32 \%acc} & 出口值与 ABI 返回类型 \\
+    \hline
+  \end{tabular}
+\end{table}
+
+数组访问的核心片段值得再展开一次：
+\begin{lstlisting}[basicstyle=\ttfamily\scriptsize]
+%index = sext i32 %i to i64
+%a.element = getelementptr inbounds i32, ptr %a, i64 %index
+%a.value = load i32, ptr %a.element, align 4
+\end{lstlisting}
+\texttt{sext} 把有符号 \texttt{i32} 索引扩展到 64 位；GEP（GetElementPtr）只计算地址，不读取数组；随后的 \texttt{load} 才产生内存效应。\texttt{inbounds} 也不是“帮助优化”的无害提示，而是关于同一已分配对象及地址计算不越界/不环绕的语义承诺；违反条件将产生 poison 值\cite{llvm-gep,llvm-langref}。本例由调用方先把 \(n\) 夹在 \([0,8]\)，循环体只在 \(0\le i<n\) 时执行，且两个数组均有 8 个元素，因而这项承诺有案例级依据。若把内核公开给任意调用者，仅看函数签名却不能证明该前置条件；这也说明“模块内当前调用正确”和“函数接口对所有调用都安全”是不同命题。
+
+\subsection{\texttt{main}：内存对象、调用与属性}
+
+手写 \texttt{main} 保留两个局部数组，并以常量模板初始化：
+\begin{lstlisting}[basicstyle=\ttfamily\scriptsize]
+%a = alloca [8 x i32], align 16
+%b = alloca [8 x i32], align 16
+call void @llvm.memcpy.p0.p0.i64(ptr align 16 %a,
+  ptr align 16 @a.init, i64 32, i1 false)
+%raw = call i32 @getint()
+...
+%result = call i32 @clipped_dot(ptr %a, ptr %b,
+  i32 %n, i32 -8, i32 12)
+call void @putint(i32 %result)
+call void @putch(i32 10)
+\end{lstlisting}
+\texttt{alloca} 分配的是当前函数栈帧中的对象而非“寄存器”；这里每个对象大小为 32 byte。\texttt{llvm.memcpy} 是内在函数（intrinsic），其声明中的 \texttt{noalias}、\texttt{nocapture}、\texttt{writeonly}/\texttt{readonly}、\texttt{immarg} 描述两个指针和常量实参的效应。预备实现以 LLVM 18 工具链产生证据，因此保留该版本接受的 \texttt{nocapture} 拼写；更新的语言参考还提供更细粒度的 \texttt{captures(...)} 形式，论文不应把滚动文档的拼写倒灌成已执行工件。
+
+普通 \texttt{call} 同时连接类型系统、内存效应和 ABI。手写声明只给出最小签名，没有擅自添加 \texttt{nounwind}、\texttt{willreturn} 或 \texttt{memory(...)}；这是保守而正确的。相反，Clang 生成的 IR 会基于源类型、编译选项和内部推断附加 \texttt{noundef}、\texttt{nocapture}、\texttt{readonly} 等属性。表~\ref{tab:attrs} 强调这些都属于契约，而非注释。
+
+\begin{table}[t]
+  \centering
+  \caption{案例附近常见属性的优化含义}
+  \label{tab:attrs}
+  \small
+  \begin{tabular}{p{0.19\textwidth}p{0.35\textwidth}p{0.34\textwidth}}
+    \hline
+    属性 & 可依赖的承诺 & 不能顺带推出的结论 \\
+    \hline
+    \texttt{readonly} & 经参数指针可达的内存不被写入 & 不等于不读、不捕获、非空或互不别名 \\
+    \texttt{nocapture} & 指针不会以规定方式逸出调用 & 不等于被指对象不被读写 \\
+    \texttt{noalias} & 在 LangRef 规定的作用域内满足特殊的不别名关系 & 不是可随处粘贴的 C \texttt{restrict} 同义词 \\
+    \texttt{noundef} & 参数/返回表示不含 undef 或 poison 位 & 不保证指针可解引用 \\
+    \texttt{memory(argmem: read)} & 可见内存效应限于读取实参可达内存 & 不保证终止或不抛出 \\
+    \texttt{nounwind} & 不经 LLVM 异常机制展开 & 不等于不会陷阱 \\
+    \hline
+  \end{tabular}
+\end{table}
+
+\subsection{\texttt{undef}、poison、\texttt{freeze} 与未定义行为}
+
+优化正确性最容易在“未知值”一词上被含混掉。LLVM 至少区分四类情形\cite{llvm-langref,llvm-vellvm2012}：
+\begin{itemize}
+  \item 立即未定义行为（undefined behavior, UB）：执行已违反 IR 契约，此后优化器不必保持该次执行的行为，例如以 poison 作为分支条件；
+  \item \texttt{undef}：每一次使用都可独立选择一个未指定比特模式，两个使用未必相等；现代 IR 通常更鼓励使用 poison；
+  \item poison：一种延迟传播的错误值，多数指令会继续传播它，直到进入分支条件、解引用地址等触发位置才形成 UB；例如 \texttt{add nsw} 实际发生有符号环绕时产生 poison；
+  \item \texttt{freeze v}：若 \texttt{v} 为 undef/poison，则为这条 \texttt{freeze} 的结果选定一个任意但固定的普通值；该结果的所有使用保持一致。
+\end{itemize}
+
+这组区分直接解释了手写 IR 为何没有给 \texttt{mul} 和 \texttt{add} 随意加 \texttt{nsw}。\texttt{nsw} 不是运行时溢出检查，而是“所有已定义执行均不发生有符号环绕”的证明声明。固定数组、\(n\le8\) 和逐项截断使本案例当前输入的累计值落在 \([-64,96]\)，但 \texttt{product} 在截断之前仍取决于任意函数实参；若接口允许任意 \texttt{i32} 数组，乘法本身可能按 SysY/C 的规则溢出。Clang 18 从 C 源得到的 \texttt{-O0} 工件确实在乘、加处生成了 \texttt{nsw}，这是前端依据 C 有符号溢出为 UB 所作的语义编码；手写 IR 选择普通 \texttt{mul}/\texttt{add}，则定义了模 \(2^{32}\) 的 IR 算术。两份 IR 在已测固定数组域上一致，但不能由此宣称它们对所有可能调用都等价。
+
+Clang 的 \texttt{-O2} 工件还出现
+\begin{lstlisting}[basicstyle=\ttfamily\scriptsize]
+%12 = insertelement <4 x i32> poison, i32 %3, i64 0
+%13 = shufflevector <4 x i32> %12, <4 x i32> poison,
+                    <4 x i32> zeroinitializer
+\end{lstlisting}
+这里 poison 只占尚未被读取、随后被 \texttt{shufflevector} 广播覆盖的通道，是构造向量常量的惯用形式，并不表示程序已经发生 UB。判断 poison 必须沿使用链分析，不能见到单词就诊断错误。
+
+\subsection{结构验证与语义证明的边界}
+
+LLVM 验证器能检查类型匹配、终结指令、\texttt{phi} 前驱、定义支配使用、属性结构等大量良构性条件；\texttt{opt -passes=verify} 或管线中的逐步验证能较早定位破坏不变量的变换。然而，它不能普遍证明 \texttt{inbounds} 的动态前置条件、属性是否如实、与 SysY 源程序的语义等价，也不能证明最终机器代码对所有输入正确。官方 GEP 文档明确指出，不存在一个能静态捕获所有错误用法的通用检查器\cite{llvm-gep}。
+
+因此，本案例采用三层而不是单一“验证通过”结论：第一层是 IR 结构验证；第二层是跨表示的固定测试与差分执行；第三层才是对数组界、数值范围和调用前置条件的人工论证。形式化 LLVM 语义与翻译验证（translation validation）工具可以扩大第三层的机械化范围，但它们覆盖的 IR 子集、未定义行为模型和 LLVM 版本仍是明确限制；例如 Alive2 能发现许多不正确的优化，但不能把任意完整编译器一次性提升为已证明系统\cite{llvm-alive2,llvm-vellvm2012}。这一认识为下一节的优化分析划定证据边界：我们会说“工件中观察到什么”，并把“哪一个 pass 可能造成它”作为需要单独证实的因果判断。

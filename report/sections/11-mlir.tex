@@ -1,0 +1,123 @@
+\section{从单层交接面到多层语义：MLIR 与 AscendNPU IR}
+\label{sec:mlir}
+
+前文把同一个截断点积追踪到 LLVM IR、RV64 指令与 ELF 映像。那条路线很适合回答“一个已相当接近机器的程序如何成为进程”，却不是所有编译问题的最佳起点：若过早把点积写成地址递增、载入、乘加和分支，后续优化器必须从低层偶然形态中重新猜测“这是一个带归约维的结构化计算”。多层中间表示（multi-level intermediate representation）试图把这项猜测改成显式契约。MLIR 的贡献并非声称 LLVM 只有一种内部表示，而是提供一套可扩展的共同基础设施，使不同抽象层的操作、类型和属性能在同一个 SSA 模块中共存，并在明确的合法性规则下逐步替换\cite{adv-mlir-cgo,adv-mlir-langref}。
+
+本节有意分开三种证据。其一，MLIR 机制来自同行评审论文和上游文档；其二，AscendNPU IR 的结构与 \code{VecAdd} 来自官方文档及固定版本源代码；其三，把本文截断点积映射为 \code{tensor/linalg/scf/vector/Ascend} 路径，只是\emph{未执行的展望}。当前 Windows 主机没有 CANN 与 Ascend 设备，因而本文没有编造 IR 快照、设备输出或性能数字。
+
+\subsection{方言不是流水线阶段，接口才使组合成立}
+
+方言（dialect）是操作、类型与属性的语义命名空间；它不是一张规定“先出现 A、后只能出现 B”的阶段清单。一个模块可同时含有 \code{linalg} 的结构化计算、\code{tensor} 的值语义、\code{arith} 的标量运算、\code{scf} 的控制结构与目标方言的内在操作。因而图~\ref{fig:mlir-partial-order} 不是全序楼梯，而是逐渐改变组成比例的混合表示。这里所谓“更高”或“更低”只是针对某项信息：\code{tensor} 与 \code{memref} 的关键差异是值与存储身份，\code{linalg} 与 \code{scf} 的关键差异是结构化迭代意图与显式循环；它们不能被一个标量高度完全排序。
+
+\begin{figure}[H]
+  \centering
+  \resizebox{\textwidth}{!}{%
+  \begin{tikzpicture}[node distance=7mm and 8mm, every node/.style={font=\scriptsize},
+    box/.style={draw,rounded corners,align=center,inner sep=4pt},
+    arr/.style={-{Stealth[length=2mm]},thick}]
+    \node[box] (sem) {数学语义\\截断映射 $+$ 点积归约};
+    \node[box,right=of sem] (mix1) {\code{tensor} $+$ \code{linalg} $+$ \code{arith}\\形状、索引映射、归约维};
+    \node[box,right=of mix1] (mix2) {\code{scf} $+$ \code{vector} $+$ \code{memref}\\循环、虚拟 SIMD、存储};
+    \node[box,right=of mix2] (target) {目标方言 $+$ \code{llvm}\\地址空间、ABI、内在函数};
+    \draw[arr] (sem)--node[above]{结构化} (mix1);
+    \draw[arr] (mix1)--node[above]{改写/转换} (mix2);
+    \draw[arr] (mix2)--node[above]{目标化} (target);
+    \node[draw,dashed,rounded corners,fit=(mix1)(mix2),inner sep=1mm] {};
+  \end{tikzpicture}%
+  }
+  \caption{渐进式降低（progressive lowering）的偏序视图。虚线区域表示多种抽象共存，而非一次把整个模块换成“下一种 IR”。}
+  \label{fig:mlir-partial-order}
+\end{figure}
+
+仅有命名空间仍可能把巨型 \code{switch} 分散到多个目录。MLIR 的接口（interface）允许分析和变换询问“该操作是否有内存效果、是否具有目的地风格、如何分块”，而不枚举所有具体操作。操作接口描述单个操作的能力，方言接口描述一族操作的行为，外部模型则允许变换库在不反向耦合核心方言的情况下补充实现\cite{adv-mlir-interfaces}。例如 \code{LinalgStructuredInterface} 暴露迭代器类型与索引映射，\code{DestinationStyleOpInterface} 把输出/初值操作数显式化，\code{MemoryEffectOpInterface} 为死代码删除与循环不变量外提提供副作用事实；\code{BufferizableOpInterface} 则说明张量操作如何读、写、别名并改写为缓冲区。接口把“可应用某类算法”变为结构化能力，而不是对方言名字的猜测。
+
+这对截断点积的直接意义是：乘法后的逐项截断是可融合的逐元素区域，随后求和是具有一个归约迭代器的结构化操作。只要这些事实还在接口中，分块、融合和向量化便可共享通用实现；若已经把它们粉碎成任意 CFG，合法性分析就必须昂贵地重建这些事实。Linalg 的设计动机正是延后这种信息损失，而不是承诺任何保留高层 IR 的程序必然更快\cite{adv-mlir-linalg-rationale}。
+
+\subsection{改写、转换与“合法”究竟指什么}
+
+模式改写（pattern rewriting）描述局部等价替换；方言转换（dialect conversion）在此之上增加全局验收合同。\code{ConversionTarget} 把操作声明为合法、非法或动态合法，转换模式负责把非法项变成合法项，\code{TypeConverter} 同步改变结果、操作数以及区域和基本块参数的类型\cite{adv-mlir-conversion}。动态合法性很重要：同一个 \code{func.call} 可能只在签名已完成类型转换时才合法；递归合法性则可在外层操作满足条件后接纳其整个内部区域。
+
+\begin{table}[tb]
+  \centering
+  \caption{三种转换模式给出的不同保证。}
+  \label{tab:conversion-modes}
+  \begin{tabularx}{\textwidth}{@{}p{0.20\textwidth}p{0.31\textwidth}X@{}}
+    \toprule
+    模式 & 成功条件 & 适合本文何处 \\
+    \midrule
+    部分转换（partial conversion） & 被明确标为非法的操作均已合法化；未指定者可保留 & 中间阶段允许 \code{linalg}、\code{scf}、\code{vector} 与目标操作共存 \\
+    完全转换（full conversion） & 范围内每个操作均被目标接纳 & 越过可执行后端或序列化边界前，拒绝残留高层操作 \\
+    分析转换（analysis conversion） & 只判断可合法化性，不提交改写 & 诊断缺失模式、规划迁移，不把预测误报成产物 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+“部分”绝不等于“类型随便混用”。已转换的生产者和未转换的消费者之间仍要满足 SSA 使用点的类型契约；框架插入源/目标物化（materialization），无法构造桥接就失败。\code{TypeConverter} 还能进行一对多类型转换（1:N type conversion）：一个排序 \code{memref} 在 LLVM ABI 边界可能展开为分配指针、对齐指针、偏移、各维大小与步长，而不是简单变成一个 \code{ptr}\cite{adv-mlir-conversion,adv-mlir-llvm-target}。临时的 \code{builtin.unrealized\_conversion\_cast} 只是在类型系统间架桥，没有独立执行语义，进入最终可执行边界前应被消解。
+
+由此可以更准确地描述“降低”：每一步先声明本步允许留下的世界，再证明或构造从非法项到合法项的路径。普通规范化可以夹在多个转换之间；模式也可串联，而不要求每个源操作有一条直达机器操作的规则。若截断比较暂时保留为 \code{arith}、归约先从 \code{linalg} 变成 \code{scf}、向量传输仍是 \code{vector}，这不是残缺的 IR，而是合法性集合有意容纳的混合状态。
+
+\subsection{缓冲化：从值等价到存储身份}
+
+张量值没有可观察的原地更新身份；\code{memref} 则具有基址、布局、地址空间、别名和生存期。把前者变成后者的缓冲化（bufferization）因此是语义边界，不是语法清理。One-Shot Bufferize 沿整个函数的 SSA 使用--定义链分析读写与冲突，尽量复用目标缓冲区；不能安全原地化时，代价会以分配和复制出现\cite{adv-mlir-bufferization}。这解释了为何上游通常建议先在张量形式做分块/融合，再较晚缓冲化：值语义更容易变换，而过早引入存储会把优化问题同别名及所有权纠缠在一起。
+
+对本文点积，两个输入只读，乘积与逐项截断可望融合，标量归约目的地携带累加状态。然而“可望”不是原地安全性的证明。未知张量操作若没有 \code{BufferizableOpInterface}，要么成为显式边界，要么使流程失败；函数边界缓冲化还受调用图等实现限制。缓冲化后必须回答：谁分配、谁释放、切片是否别名、循环携带值落在哪个缓冲区，以及复制是否进入热循环。所有权式释放流水线比已弃用的旧释放 Pass 更能显式表达这些义务\cite{adv-mlir-bufferization}。
+
+地址空间也在这里从注解变为可执行约束。通用 \code{memref} 允许目标定义内存空间；Ascend 的 HIVM 则区分全局内存 GM、统一缓冲区 UB，以及 L1、L0A/L0B/L0C 等片上层级。空间决定合法的数据搬运、容量、对齐和调度。官方内存规划文档还为特定硬件给出 UB/L1 的 32 字节以及 L0 系列的 512 字节对齐，并依据活跃区间复用片上地址\cite{adv-ascend-memory}。因此点积的分块大小不仅是“性能参数”：输入块和部分和必须能合法驻留，跨核合并、同步与累加精度也要落实。
+
+\subsection{LLVM 方言是一道明确边界，而非终点的别名}
+
+MLIR 的 \code{llvm} 方言是对应 LLVM IR 语义的\emph{MLIR 方言}，外部 LLVM IR 是另一种序列化与 API 世界。正确路线分两步：先把模块完全转换为可翻译的 LLVM/目标内在方言，再机械地翻译到 LLVM IR；实质优化应主要发生在前一步，而不是寄希望于翻译器理解任意高层操作\cite{adv-mlir-llvm-dialect,adv-mlir-llvm-target}。默认排序 \code{memref} 会成为描述符，函数实参可能按调用约定拆成多个标量；裸指针约定只在静态形状、默认布局等受限条件下成立。
+
+这道边界也帮助重新理解前文：LLVM IR 依然拥有丰富的 SSA、向量、目标内在函数和优化 Pass，绝非“只能表示汇编”；但它不提供 MLIR 那种由任意领域方言共同扩展的抽象层协议。二者是接力关系：MLIR 负责在领域和硬件选择尚未落定时保存结构，LLVM 接手已经具体化的控制、内存、ABI 与低层代码生成。
+
+\subsection{Ascend 官方 \code{VecAdd}：证据从 HIVM 才开始}
+
+AscendNPU IR 把 HFusion、HIVM 与 HACC 等方言建立在 MLIR 基础设施上。官方架构把 HFusion 描述为扩展 Linalg 的结构化操作层，用于保留命名语义、融合和面向硬件无关的处理；HIVM 进一步显式表示 NPU 的 tile 级计算、搬运、同步、核划分、片上内存与流水；HACC 描述异构调用和设备入口\cite{adv-ascend-architecture}。源树中可见 \code{TorchToHFusion}、\code{HFusionToHIVM} 等转换组件，这支持“存在更高层集成路径”，却不能证明任意程序已走通该路径\cite{adv-ascend-source}。
+
+最关键的证据校准是：官方快速入门的 \code{VecAdd} 输入\emph{已经是低层 HIVM/memref IR}，不是从 Torch、Linalg 或 HFusion 开始的端到端展示\cite{adv-ascend-vecadd}。它的外部参数为 GM 中的 \code{memref<16xi16>}，在 UB 分配三个临时区，用 \code{hivm.hir.load} 把两个输入搬入 UB，执行 \code{hivm.hir.vadd}，再以 \code{hivm.hir.store} 写回 GM；\code{hacc.entry} 与设备函数属性标识内核入口。\code{bishengir-compile add.mlir -enable-hivm-compile -o kernel.o} 产生的是供 CANN 主机程序注册、启动和同步的设备对象，不是独立主机可执行文件。
+
+\begin{equation}
+  \mathrm{GM}(A),\mathrm{GM}(B)
+  \xrightarrow{\texttt{hir.load}}
+  \mathrm{UB}(A),\mathrm{UB}(B)
+  \xrightarrow{\texttt{hir.vadd}}
+  \mathrm{UB}(C)
+  \xrightarrow{\texttt{hir.store}}
+  \mathrm{GM}(C).
+  \label{eq:vecadd-flow}
+\end{equation}
+
+式~\eqref{eq:vecadd-flow} 直接展示了存储层级与搬运，但没有展示 HFusion 到 HIVM 的降低，也没有验证动态形状、归约、自动融合或性能可移植性。官方宿主示例完成 ACL 初始化、设备内存分配与拷贝、二进制/函数注册、流上启动、同步、回拷和 16 个结果比较；这是一个功能冒烟测试而非基准。若要把“逐步降低”升级为观察结果，应使用官方提供的 Pass 前后 IR 打印选项和 \code{bishengir-opt}，固定工具版本并保存每一道快照\cite{adv-ascend-faq}。
+
+\subsection{未执行展望：截断点积的渐进映射}
+
+下面只提出可证伪的设计，不声称本项目运行过该管线。把输入长度限制为
+$k=\min\{8,\max\{0,n\}\}$，则数学核心为
+\begin{equation}
+ r=\sum_{i=0}^{k-1}\operatorname{clip}(a_i b_i,-8,12),
+ \qquad 0\le k\le 8 .
+\end{equation}
+每一项都落在 $[-8,12]$，故总和落在 $[-64,96]$，保证有符号 32 位加法不溢出；截断发生在每个乘积之后而不是累加器每次更新之后，所以外层仍是普通加法归约。这项源级不变量是并行/向量归约的法律依据，而不是后端猜测。
+
+\begin{table}[tb]
+  \centering
+  \caption{截断点积的拟议多层路线（全部为未执行展望）。}
+  \label{tab:proposed-ascend-dot}
+  \begin{tabularx}{\textwidth}{@{}p{0.18\textwidth}p{0.34\textwidth}X@{}}
+    \toprule
+    层次 & 保留或新引入的事实 & 必须验证后才能升级的主张 \\
+    \midrule
+    \code{tensor/linalg} & 形状、逐项乘法与截断、单一归约维、目的地初值 & 实际 IR 能表示受限动态前缀；截断被融合且有符号语义一致 \\
+    \code{scf/vector} & 分块循环、尾块条件、虚拟 SIMD、局部归约 & 向量形状被目标支持；$k=0$ 与尾块正确；无非法重结合 \\
+    HFusion（候选支路） & 命名结构、融合与目标调度意图 & 具体版本存在覆盖这些操作的合法转换；不是由 \code{VecAdd} 推断而来 \\
+    HIVM/\code{memref} & GM/UB 等存储、搬运、核/管线、同步与分配 & UB 容量/对齐满足；部分和策略、跨核合并与数据竞争已解决 \\
+    \code{llvm}/设备对象 & 具体 ABI、描述符/指针、内在函数和二进制边界 & 完全合法化、无悬空转换 cast；CANN 宿主按真实 ABI 启动并比对输出 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+这条路线不是唯一线性链：规则循环可走 \code{linalg}\(\rightarrow\)\code{affine/scf}，向量操作可在循环形成前后出现；Ascend 支路可能从 HFusion 进入 HIVM，而不适用的主机清理代码可直接走 LLVM。真正的阶段定义应是“哪些操作在此转换目标下已非法”，而不是一张宣传式方言列表。
+
+验证该展望至少需要：（1）固定 AscendNPU IR、LLVM、CANN 与设备版本；（2）保存 tensor/Linalg、HFusion（若实际经过）、HIVM、高/低层边界和最终对象的原始 IR；（3）逐边界记录消失与新增的操作、类型、布局和地址空间；（4）在 $n=0,1,4,8,10$ 等同一语义样例上与 CPU 参考实现逐项比较；（5）把编译、搬运、冷启动和稳态内核时间分开。任一转换不支持动态前缀、产生超范围访问、改变有符号限幅、或需要文档未说明的 ABI，即证伪当前映射，而不是由作者补上一句“理论上可行”。
+
+因此，本节能确立的结论较窄但扎实：MLIR 把多层语义共存、接口复用与合法性驱动转换变成了工程机制；Ascend 官方材料确实展示了 HIVM 层的地址空间和向量搬运计算；而本文点积从结构化张量到 Ascend 设备的整条路，仍是有明确验收条件的研究展望。

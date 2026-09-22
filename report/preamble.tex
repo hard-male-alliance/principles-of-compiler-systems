@@ -1,0 +1,57 @@
+% Shared LLNCS configuration / LLNCS 共享配置
+\usepackage[UTF8,scheme=plain,fontset=fandol]{ctex}
+\usepackage{amsmath,amssymb,booktabs,tabularx,array,graphicx,xcolor}
+\usepackage{listings,float,url,tikz}
+\usepackage[hidelinks]{hyperref}
+\usetikzlibrary{arrows.meta,positioning,shapes.geometric,fit}
+
+% Keep long identifiers and URLs from damaging the narrow LNCS measure.
+% 避免长标识符与 URL 撑破 LNCS 较窄的版心。
+\emergencystretch=3em
+\Urlmuskip=0mu plus 1mu
+
+% Evidence-oriented source listing style / 面向证据展示的代码清单样式
+\lstdefinestyle{evidence}{
+  basicstyle=\ttfamily\scriptsize,
+  columns=fullflexible,
+  keepspaces=true,
+  showstringspaces=false,
+  breaklines=true,
+  breakatwhitespace=false,
+  frame=single,
+  framerule=0.25pt,
+  rulecolor=\color{black!30},
+  numbers=left,
+  numberstyle=\tiny\color{black!55},
+  xleftmargin=1.8em,
+  framexleftmargin=1.4em,
+  aboveskip=0.7\baselineskip,
+  belowskip=0.5\baselineskip,
+  keywordstyle=\color{blue!60!black},
+  commentstyle=\color{green!35!black},
+  stringstyle=\color{orange!50!black}
+}
+\lstset{style=evidence}
+
+% LLVM IR and RISC-V are intentionally lightweight lexical definitions.
+% LLVM IR 与 RISC-V 仅定义论文所需的轻量词法高亮。
+\lstdefinelanguage{LLVMIR}{
+  morekeywords={define,declare,target,private,constant,global,align,ptr,readonly,
+    entry,ret,br,label,phi,icmp,select,sext,getelementptr,inbounds,load,store,
+    call,alloca,add,mul,void,i1,i8,i32,i64},
+  sensitive=true,
+  morecomment=[l]{;},
+  morestring=[b]"
+}
+\lstdefinelanguage{RISCV}{
+  morekeywords={add,addi,addw,addiw,sub,mul,mulw,slli,lw,sw,ld,sd,li,mv,
+    blt,bge,ble,bgt,beq,bne,j,call,ret,globl,type,size,text,section,attribute},
+  sensitive=true,
+  morecomment=[l]{\#}
+}
+
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\stage}[1]{\textbf{#1}}
+\newcommand{\observed}{\textbf{观察：}}
+\newcommand{\inferred}{\textbf{推断：}}
+\newcommand{\outlook}{\textbf{展望：}}
