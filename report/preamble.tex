@@ -1,37 +1,105 @@
 % Shared LLNCS configuration / LLNCS 共享配置
 \usepackage[UTF8,scheme=plain,fontset=fandol]{ctex}
 \usepackage{amsmath,amssymb,booktabs,tabularx,array,graphicx,xcolor}
-\usepackage{listings,float,url,tikz}
+\usepackage{listings,float,url,tikz,pgfplots}
 \usepackage[hidelinks]{hyperref}
-\usetikzlibrary{arrows.meta,positioning,shapes.geometric,fit}
+\pgfplotsset{compat=1.18}
+\usetikzlibrary{arrows.meta,backgrounds,calc,decorations.pathreplacing,fit,
+  matrix,positioning,shapes.geometric}
 
 % Keep long identifiers and URLs from damaging the narrow LNCS measure.
 % 避免长标识符与 URL 撑破 LNCS 较窄的版心。
 \emergencystretch=3em
 \Urlmuskip=0mu plus 1mu
 
-% Evidence-oriented source listing style / 面向证据展示的代码清单样式
-\lstdefinestyle{evidence}{
-  basicstyle=\ttfamily\scriptsize,
+% Pedagogical listing roles / 教学型代码清单角色。
+% Exact syntax is shown only when it carries the explanation; commands are
+% visually quieter than programs. / 仅在语法本身参与论证时突出代码，命令则弱化呈现。
+\lstdefinestyle{explanatory}{
+  basicstyle=\ttfamily\footnotesize,
   columns=fullflexible,
   keepspaces=true,
   showstringspaces=false,
   breaklines=true,
   breakatwhitespace=false,
-  frame=single,
-  framerule=0.25pt,
-  rulecolor=\color{black!30},
-  numbers=left,
-  numberstyle=\tiny\color{black!55},
-  xleftmargin=1.8em,
-  framexleftmargin=1.4em,
+  frame=none,
+  numbers=none,
+  xleftmargin=0.6em,
   aboveskip=0.7\baselineskip,
   belowskip=0.5\baselineskip,
   keywordstyle=\color{blue!60!black},
   commentstyle=\color{green!35!black},
   stringstyle=\color{orange!50!black}
 }
-\lstset{style=evidence}
+\lstdefinestyle{normative}{
+  style=explanatory,
+  basicstyle=\ttfamily\small,
+  frame=single,
+  framerule=0.35pt,
+  rulecolor=\color{black!35},
+  numbers=left,
+  numberstyle=\footnotesize\color{black!55},
+  xleftmargin=2.1em,
+  framexleftmargin=1.6em
+}
+\lstdefinestyle{command}{
+  style=explanatory,
+  backgroundcolor=\color{black!4},
+  rulecolor=\color{black!20},
+  frame=single,
+  framerule=0.25pt,
+  keywordstyle=\color{black},
+  commentstyle=\color{black!65},
+  stringstyle=\color{black}
+}
+% Compatibility alias while older section sources are being rewritten.
+% 兼容别名：旧章节迁移期间仍获得中性的教学样式。
+\lstdefinestyle{evidence}{style=explanatory}
+\lstset{style=explanatory}
+
+% Color-safe visual semantics / 色觉安全的视觉语义。
+% Every color is paired with a line, fill, or shape distinction so that the
+% diagrams remain meaningful in grayscale. / 颜色均由线型、填充或形状冗余编码。
+\definecolor{semblue}{HTML}{0072B2}
+\definecolor{decisionorange}{HTML}{E69F00}
+\definecolor{deferredpurple}{HTML}{CC79A7}
+\definecolor{constraintred}{HTML}{D55E00}
+\definecolor{artifactgray}{HTML}{6B7280}
+
+\tikzset{
+  vis/artifact/.style={draw=artifactgray,rounded corners=1.2pt,
+    line width=.45pt,fill=black!2,align=center,inner sep=3.5pt,
+    font=\footnotesize},
+  vis/decision/.style={draw=decisionorange!85!black,
+    fill=decisionorange!14,rounded corners=1.2pt,align=center,
+    inner sep=3pt,font=\footnotesize},
+  vis/semantic/.style={draw=semblue,line width=.9pt},
+  vis/semantic node/.style={vis/artifact,draw=semblue,line width=.9pt},
+  vis/deferred/.style={draw=deferredpurple!85!black,dashed,line width=.7pt},
+  vis/deferred node/.style={vis/artifact,draw=deferredpurple!85!black,
+    dashed,line width=.7pt},
+  vis/constraint/.style={draw=constraintred,densely dotted,line width=.8pt},
+  vis/constraint node/.style={vis/artifact,draw=constraintred,
+    densely dotted,line width=.8pt},
+  vis/edge/.style={-{Stealth[length=1.8mm,width=1.25mm]},line width=.55pt},
+  vis/semantic edge/.style={vis/edge,draw=semblue,line width=.9pt},
+  vis/deferred edge/.style={vis/edge,draw=deferredpurple!85!black,dashed,
+    line width=.7pt},
+  vis/constraint edge/.style={vis/edge,draw=constraintred,densely dotted,
+    line width=.8pt},
+  vis/tag/.style={draw=decisionorange!85!black,fill=decisionorange!14,
+    rounded corners=.7pt,inner sep=2pt,font=\footnotesize,align=center},
+  vis/label/.style={font=\footnotesize,align=center},
+  vis/note/.style={font=\footnotesize,align=left,text=black!85},
+  vis/group/.style={draw=black!42,rounded corners=2pt,inner sep=4pt},
+  vis/cross/.style={draw=constraintred,line width=1.1pt}
+}
+
+% Compact direct annotations shared by the figure sources.
+% 图源共享的紧凑直接标注，避免每幅图重复视觉策略。
+\newcommand{\vDecision}[1]{\tikz[baseline=(t.base)]\node[vis/tag](t){#1};}
+\newcommand{\vDeferred}[1]{\tikz[baseline=(t.base)]\node[vis/deferred node,
+  inner sep=1.5pt](t){#1};}
 
 % LLVM IR and RISC-V are intentionally lightweight lexical definitions.
 % LLVM IR 与 RISC-V 仅定义论文所需的轻量词法高亮。

@@ -1,0 +1,52 @@
+% Worked mathematical case / 数学案例总览
+\begin{figure}[htbp]
+  \centering
+  \begin{tikzpicture}
+    \begin{axis}[
+      name=clipplot,at={(0,0)},anchor=south west,
+      width=4.30cm,height=4.25cm,
+      xmin=-15,xmax=18,ymin=-12,ymax=15,
+      axis lines=middle,ticks=none,clip=false,
+      xlabel={$x$},xlabel style={font=\footnotesize},
+      every axis plot/.append style={semblue,very thick}]
+      \addplot coordinates {(-15,-8) (-8,-8) (12,12) (18,12)};
+      \node[vis/label,anchor=north] at (axis cs:-11,-8) {$\ell=-8$};
+      \node[vis/label,anchor=south,rotate=38] at (axis cs:2,2) {恒等区间};
+      \node[vis/label,anchor=north] at (axis cs:15,12) {$h=12$};
+    \end{axis}
+    \node[vis/label,anchor=south west,font=\bfseries\footnotesize]
+      at (clipplot.north west) {(a) $y=\operatorname{clip}(x,-8,12)$};
+
+    \begin{scope}[shift={(4.82cm,.05cm)}]
+      \node[vis/label,anchor=west,font=\bfseries\footnotesize] at (0,3.72) {(b) 八项计算与前缀和};
+      \node[vis/label,anchor=east] at (0,3.05) {$a_i b_i$};
+      \node[vis/label,anchor=east] at (0,2.35) {截断后};
+      \foreach \x/\raw/\val/\chg in {
+        .45/-8/-8/0,1.28/-3/-3/0,2.11/7/7/0,2.94/12/12/0,
+        3.77/-9/-8/1,4.60/-10/-8/1,5.43/12/12/0,6.26/15/12/1}
+      {
+        \node[vis/artifact,minimum width=.72cm,minimum height=.48cm] at (\x,3.05) {$\raw$};
+        \ifnum\chg=1
+          \node[vis/decision,minimum width=.72cm,minimum height=.48cm] at (\x,2.35) {$\val$};
+        \else
+          \node[vis/artifact,minimum width=.72cm,minimum height=.48cm] at (\x,2.35) {$\val$};
+        \fi
+      }
+      \draw[->,black!55] (.12,.20) -- (6.7,.20) node[right,vis/label] {$k$};
+      \draw[->,black!55] (.12,.20) -- (.12,1.85) node[above,vis/label] {$D(k)$};
+      \draw[vis/semantic,line width=1.1pt]
+        plot coordinates {(.12,1.15) (.45,.72) (1.28,.56) (2.11,.93)
+          (2.94,1.58) (3.77,1.15) (4.60,.72) (5.43,1.36) (6.26,1.80)};
+      \foreach \x/\y in {.12/1.15,.45/.72,1.28/.56,2.11/.93,
+          2.94/1.58,3.77/1.15,4.60/.72,5.43/1.36,6.26/1.80}
+        \filldraw[fill=white,draw=semblue,line width=.8pt] (\x,\y) circle (1.15pt);
+      \foreach \x/\k in {.12/0,.45/1,1.28/2,2.11/3,2.94/4,
+          3.77/5,4.60/6,5.43/7,6.26/8}
+        \node[vis/label,below] at (\x,.20) {$\k$};
+      \node[vis/note,anchor=west] at (.18,-.47)
+        {$k=\operatorname{clip}(n,0,8)$；橙色格表示截断改变了乘积。};
+    \end{scope}
+  \end{tikzpicture}
+  \caption{案例计算的两次限制发生在不同对象上：输入决定前缀长度 $k$，逐项截断决定每个加数；蓝色折线给出 $k=0,\ldots,8$ 时的前缀和。}
+  \label{fig:worked-case}
+\end{figure}

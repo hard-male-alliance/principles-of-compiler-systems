@@ -1,0 +1,37 @@
+% Front-end syntax and typing / 前端语法与类型
+\begin{figure}[htbp]
+  \centering
+  \begin{tikzpicture}[level distance=7mm,
+    every child/.style={vis/edge},
+    level 1/.style={sibling distance=39mm},
+    level 2/.style={sibling distance=17mm},
+    level 3/.style={sibling distance=8mm}]
+    \node[vis/artifact,label={[vis/tag]above:类型：\texttt{int}}] (mul) at (-2.3,0.25) {乘法 $*$}
+      child {node[vis/artifact,label={[vis/tag]above left:$\Gamma(a)$}] (asub) {数组下标}
+        child {node[vis/artifact] {\texttt{a}}}
+        child {node[vis/artifact] {\texttt{i}}}}
+      child {node[vis/artifact,label={[vis/tag]above right:$\Gamma(b)$}] (bsub) {数组下标}
+        child {node[vis/artifact] {\texttt{b}}}
+        child {node[vis/artifact] {\texttt{i}}}};
+    \node[vis/label,font=\bfseries\footnotesize,anchor=south west] at (-5.55,1.65) {(a) 结构与绑定};
+
+    \node[vis/artifact,text width=4.85cm,anchor=north west] (deriv) at (.85,1.15) {
+      \centering
+      $\Gamma(a)=\texttt{int}[8]\qquad \Gamma(i)=\texttt{int}$\\[3pt]
+      $\displaystyle
+       \frac{\Gamma\vdash a\leadsto \texttt{int}^*\quad
+             \Gamma\vdash i:\texttt{int}}
+            {\Gamma\vdash a[i]:\texttt{int}\ \text{lvalue}}$\\[5pt]
+      $\displaystyle
+       \frac{\Gamma\vdash a[i]:\texttt{int}\quad
+             \Gamma\vdash b[i]:\texttt{int}}
+            {\Gamma\vdash a[i]*b[i]:\texttt{int}}$
+    };
+    \node[vis/label,font=\bfseries\footnotesize,anchor=south west] at (.85,1.15) {(b) 类型判断};
+    \node[vis/decision,below=5mm of deriv,text width=4.8cm] (ir)
+      {IR 义务：两次地址计算、两次载入与一次整数乘法};
+    \draw[vis/semantic edge] (deriv) -- node[vis/label,right]{约束生成} (ir);
+  \end{tikzpicture}
+  \caption{解析给出表达式的树形结构，语义分析把名字、类型与隐式转换附着到同一结构；这些判断随后约束地址计算、载入和乘法的 IR 生成。}
+  \label{fig:frontend-typing}
+\end{figure}
