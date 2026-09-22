@@ -1,0 +1,17 @@
+# IDE 本地配置 / Local IDE settings
+.idea/
+
+# Codex 与项目临时文件 / Codex and project-local temporary files
+.cache/
+.temp/
+
+# 常见构建目录 / Common build directories
+build/
+cmake-build-*/
+
+# 操作系统与编辑器临时文件 / OS and editor temporary files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
