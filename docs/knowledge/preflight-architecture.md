@@ -1,9 +1,9 @@
 # Preflight Compiler Study: Experiment and Repository Architecture
 
-**Status:** proposed implementation contract  
+**Status:** proposed implementation contract
 **Scope:** the course task “Preliminary Work — Know Your Compiler,” including the
 SysY/C case, hand-written LLVM IR, hand-written RV64 and AArch64 assembly,
-runtime linking, evidence capture, tests, the LNCS report, and CI.  
+runtime linking, evidence capture, tests, the LNCS report, and CI.
 **Authority:** Linux on GitHub Actions is the grading/reproducibility authority.
 Windows is a supported authoring and inspection environment, not a substitute
 execution oracle for Linux ELF targets.
@@ -32,10 +32,12 @@ is uploaded as a CI artifact; authored sources and golden answers remain in the
 repository.
 
 The authoritative pipeline uses GNU/Linux cross toolchains and QEMU Linux user
-emulation. The old course-note use of `riscv64-unknown-elf-gcc` should **not** be
-copied: the supplied runtime calls libc and Linux facilities, and its RISC-V
-archive is an ELF64 little-endian RISC-V object with double-float ABI flags. The
-correct toolchain family is `riscv64-linux-gnu-*`.
+emulation. It rebuilds the runtime from `lib/sylib.c` with the same GNU Linux
+toolchain and ABI as each program. The precompiled archives are reference assets,
+not authoritative link inputs: ELF machine/float flags alone do not establish C
+library compatibility, and the supplied RISC-V archive retains an unresolved
+`_impure_ptr`, which is strong evidence of a newlib-oriented provenance. It has
+not been validated as compatible with a `riscv64-linux-gnu` glibc link.
 
 ## 2. Evidence and constraints already present in this repository
 
@@ -46,14 +48,18 @@ artifacts:
 
 | Artifact | Locally observed format | Architectural consequence |
 |---|---|---|
-| `lib/libsysy_x86.a` | ELF64 x86-64 relocatable member | Runnable only in a compatible Linux x86-64 environment, not native Windows |
-| `lib/libsysy_riscv.a` | ELF64 little-endian RISC-V; `EF_RISCV_RVC` and `EF_RISCV_FLOAT_ABI_DOUBLE` | Compile/link as `rv64gc` + `lp64d`; do not mix with a soft-float ABI |
-| `lib/libsysy_aarch.a` | ELF64 little-endian AArch64 | Compile/link for AArch64 Linux GNU ABI |
-| `lib/sylib.c`, `lib/sylib.h` | libc, `gettimeofday`, constructor/destructor, I/O functions | Requires a hosted Linux C environment; stderr contains timing output |
+| `lib/libsysy_x86.a` | ELF64 x86-64 relocatable member | Reference asset only until its libc/toolchain provenance is demonstrated; not runnable natively on Windows |
+| `lib/libsysy_riscv.a` | ELF64 little-endian RISC-V; `EF_RISCV_RVC`, double-float ABI, and unresolved `_impure_ptr` after relocatable linking | Likely newlib-oriented; **not** a validated glibc/GNU Linux runtime despite compatible-looking machine flags |
+| `lib/libsysy_aarch.a` | ELF64 little-endian AArch64 | Reference asset only; ELF machine type does not prove Linux libc compatibility |
+| `lib/sylib.c` | libc, `gettimeofday`, constructor/destructor, I/O functions | Canonical source for a runtime rebuilt once per authoritative target toolchain; stderr contains timing output |
+| `lib/sylib.h` | declarations **and definitions of global storage** | Build-time implementation header only; including it from the experiment program can create multiple definitions |
 
 These facts must be rechecked automatically by a `preflight-doctor` target,
-not assumed forever. The check should inspect the archive headers and fail the
-strict Linux preset on an architecture/ABI mismatch.
+not assumed forever. The doctor records machine flags, undefined symbols, and
+probable libc family for the supplied archives, but a successful header check
+must never promote them to normative Linux runtimes. The strict preset instead
+builds `sylib.c` with each selected GNU Linux toolchain and fails if that fresh
+runtime cannot be linked and exercised by a target probe.
 
 The present Windows machine has Clang, CMake, Ninja, and TeX Live, but does not
 have the complete LLVM command suite, either Linux cross GCC, or QEMU user-mode
@@ -135,7 +141,7 @@ orchestration, and derived evidence.
 │       │   ├── early_break.in
 │       │   └── early_break.out
 │       └── scripts/
-│           ├── doctor.py           # capability + archive ABI validation
+│           ├── doctor.py           # capabilities, archive provenance, rebuilt-runtime probe
 │           ├── run_stage.py        # argv execution and evidence record
 │           ├── run_cases.py        # exact behavioral oracle
 │           ├── collect_metrics.py  # structural metrics, not interpretation
@@ -162,8 +168,15 @@ orchestration, and derived evidence.
   be reviewed as a semantic change, not accepted automatically because current
   executables agree.
 * `lib/` filenames and public symbols are an existing course contract. Do not
-  rename or rebuild the supplied archives silently. A separately built runtime
-  may exist as an explicit comparison variant, not as a replacement.
+  rename or overwrite the supplied archives. Treat them as provenance-uncertain
+  reference assets. The normative build compiles `lib/sylib.c` into a separate
+  target-specific archive below the build tree using the same compiler, ABI,
+  sysroot, and libc family as the consuming program.
+* Experiment programs must not include `lib/sylib.h`: it defines global storage
+  in the header and therefore risks multiple-definition failures when combined
+  with `sylib.c`. Each C/IR/assembly source declares only the runtime functions
+  it actually calls (for example, `extern int getint(void);`, `extern void
+  putint(int);`, and `extern void putch(int);`).
 * `report/generated/` contains only machine-produced LaTeX fragments copied
   from a successful experiment result. Authors edit narrative and captions,
   never measurements embedded in generated fragments.
@@ -195,7 +208,8 @@ remainder as “edge tests.” Undefined behavior would destroy the oracle rathe
 than enrich it.
 
 The SysY source and C oracle may differ only in the preprocessor wrapper and
-runtime declarations required by C. The function bodies should remain
+the minimal explicit runtime `extern` declarations required by C. The C oracle
+must not include `sylib.h`. The function bodies should remain
 line-for-line comparable where the grammars overlap. Put the contract and
 input domain in bilingual documentation comments in both sources.
 
@@ -224,11 +238,11 @@ The minimum equivalence set is:
 
 | Variant | Build path | Execution path |
 |---|---|---|
-| C oracle, x86-64 | Clang C → object; link `libsysy_x86.a` | native Linux |
-| hand IR, x86-64 | validate/assemble IR → object; link `libsysy_x86.a` | native Linux |
-| hand IR, RV64 | Clang/LLVM target object; GNU cross driver links `libsysy_riscv.a` | `qemu-riscv64` |
+| C oracle, x86-64 | Clang C → object; link a native runtime freshly built from `sylib.c` | native Linux |
+| hand IR, x86-64 | validate/assemble IR → object; link the same freshly built native runtime | native Linux |
+| hand IR, RV64 | Clang/LLVM target object; GNU cross driver links a runtime freshly built from `sylib.c` | `qemu-riscv64` |
 | hand assembly, RV64 | GNU assembler via cross driver; static GNU link | `qemu-riscv64` |
-| hand IR, AArch64 | Clang/LLVM target object; GNU cross driver links `libsysy_aarch.a` | `qemu-aarch64` |
+| hand IR, AArch64 | Clang/LLVM target object; GNU cross driver links a runtime freshly built from `sylib.c` | `qemu-aarch64` |
 | hand assembly, AArch64 | GNU assembler via cross driver; static GNU link | `qemu-aarch64` |
 
 The authored SysY file is not treated as executable until this repository has a
@@ -286,11 +300,17 @@ opt -passes=verify -disable-output feature_tour.bc
 llc -O0 -mtriple=riscv64-unknown-linux-gnu -mattr=+m,+a,+f,+d,+c feature_tour.bc -o feature_tour.riscv64.s
 llc -O0 -mtriple=aarch64-unknown-linux-gnu feature_tour.bc -o feature_tour.aarch64.s
 
-# Hand assembly and static hosted-Linux linkage
+# Rebuild target runtimes from source with the consuming GNU Linux toolchain
+riscv64-linux-gnu-gcc -std=c17 -O2 -c lib/sylib.c -o runtime/riscv64/sylib.o
+riscv64-linux-gnu-ar rcsD runtime/riscv64/libsysy_runtime.a runtime/riscv64/sylib.o
+aarch64-linux-gnu-gcc -std=c17 -O2 -c lib/sylib.c -o runtime/aarch64/sylib.o
+aarch64-linux-gnu-ar rcsD runtime/aarch64/libsysy_runtime.a runtime/aarch64/sylib.o
+
+# Hand assembly and static hosted-Linux linkage against those rebuilt runtimes
 riscv64-linux-gnu-gcc -c -march=rv64gc -mabi=lp64d feature_tour.S -o feature_tour.o
-riscv64-linux-gnu-gcc -static -no-pie -march=rv64gc -mabi=lp64d feature_tour.o lib/libsysy_riscv.a -o feature_tour.elf
+riscv64-linux-gnu-gcc -static -no-pie -march=rv64gc -mabi=lp64d feature_tour.o runtime/riscv64/libsysy_runtime.a -o feature_tour.elf
 aarch64-linux-gnu-gcc -c -march=armv8-a feature_tour.S -o feature_tour.o
-aarch64-linux-gnu-gcc -static -no-pie -march=armv8-a feature_tour.o lib/libsysy_aarch.a -o feature_tour.elf
+aarch64-linux-gnu-gcc -static -no-pie -march=armv8-a feature_tour.o runtime/aarch64/libsysy_runtime.a -o feature_tour.elf
 ```
 
 For LLVM-IR-to-cross-object commands, invoke Clang with the explicit
@@ -313,7 +333,7 @@ Always retain both object and final-executable symbol/relocation/disassembly
 views. The paper can then demonstrate, rather than merely assert:
 
 * runtime functions are undefined in the student object but defined after
-  archive extraction and linkage;
+  extraction of the freshly rebuilt runtime archive and final linkage;
 * relocations in `.o` are resolved or transformed in the executable;
 * `_start`, C runtime startup, libc, constructor/destructor machinery, and
   additional sections appear only after the link; and
@@ -348,7 +368,7 @@ incrementally reason about.
 Suggested public targets:
 
 ```text
-preflight-doctor          validate tools, runtime archives, and manifest
+preflight-doctor          validate tools, reference provenance, runtime probes, manifest
 preflight-frontend        produce .i, tokens, AST, generated O0/O2 IR
 preflight-ir              validate hand IR and build native/cross IR variants
 preflight-riscv64         assemble, link, inspect, and run RV64 variants
@@ -373,7 +393,7 @@ CMake 3.25+) and keep `CMakeUserPresets.json` ignored.
 | Preset/workflow | Purpose | Missing-tool policy |
 |---|---|---|
 | `linux-authoritative` | Ninja tree at `build/linux-authoritative`; all targets and report | configure/doctor failure |
-| `windows-observe` | native frontend, static archive inspection, script tests, and local report | capability recorded; cross run targets unavailable, never reported as passed |
+| `windows-observe` | native frontend, reference-archive inspection, script tests, and local report | capability recorded; cross runtime/run targets unavailable, never reported as passed |
 | `preflight-ci` workflow | configure → `preflight-all` → CTest | strict |
 | `report-local` workflow | report authoring with last validated/generated data | may use checked evidence snapshot only if clearly marked |
 
@@ -617,7 +637,7 @@ Expose tests by layer so failures point to one boundary:
 |---|---|
 | `schema` | manifest and every generated result validate; IDs and paths are safe/unique |
 | `ir` | hand IR assembles and passes `opt -passes=verify` |
-| `abi` | runtime archive formats/flags match declared targets; assembly respects stack/callee-save rules |
+| `abi` | rebuilt runtime and objects share target ABI/libc; assembly respects stack/callee-save rules; reference archives are classified but not trusted |
 | `link` | all normative variants link statically; expected runtime symbols resolve |
 | `semantic` | every executable × case returns zero and stdout exactly equals golden bytes |
 | `evidence` | required stage outputs exist, are nonempty, and have hashes/provenance |
@@ -662,7 +682,8 @@ authoritative workflow succeeds.
 | Treat compiler output as the “hand-written” IR/assembly | Does not satisfy the programming task and hides design understanding |
 | Put generated `.ll`, `.s`, `.o`, and logs beside sources | Stale artifacts are easily mistaken for authored truth and pollute reviews |
 | A monolithic Bash/Make script | Poor Windows behavior, opaque incremental dependencies, fragile stream redirection |
-| `riscv64-unknown-elf-gcc` with the supplied runtime | Bare-metal toolchain conflicts with a runtime that expects hosted libc/Linux behavior |
+| Link the supplied precompiled archives directly in the authoritative Linux experiment | Compatible ELF headers do not prove libc compatibility; the RISC-V asset exposes `_impure_ptr` and appears newlib-oriented |
+| Include `sylib.h` from the experiment C program | The header defines runtime global storage, so combining it with `sylib.c` can cause multiple definitions; declare only required functions |
 | Direct `ld` final links | Omits startup files, libc/libgcc selection, and ABI defaults the compiler driver owns |
 | Dynamic cross executables as the only test | Couples tests to guest loader/sysroot paths; static ELFs are simpler and more portable under QEMU |
 | Compare RV64 vs AArch64 QEMU wall time | Confounds program, emulator, host scheduling, and implementation quality |
@@ -674,7 +695,8 @@ authoritative workflow succeeds.
 
 | Risk | Consequence | Mitigation / falsifying check |
 |---|---|---|
-| Supplied archive ABI differs from assumed compiler flags | link error or silent calling-convention mismatch | doctor inspects ELF machine/flags; compile probe; fail strict preset |
+| Supplied archive has an incompatible libc/toolchain provenance | unresolved newlib/glibc symbols or invalid runtime assumptions | keep it as an inspected reference only; rebuild `sylib.c` with the consuming GNU Linux toolchain |
+| `sylib.h` definitions enter more than one translation unit | multiple-definition link failure | runtime alone compiles `sylib.c`; programs use minimal explicit `extern` function declarations |
 | Hand IR depends on an LLVM syntax version | verifier or codegen failure after toolchain change | pin major LLVM in CI; opaque-pointer IR; record version; verifier is a hard gate |
 | Assembly violates callee-save or stack alignment rules | sporadic libc/runtime failures | follow psABI/AAPCS64, ABI-focused review, multiple call paths and tests |
 | C oracle accidentally uses behavior outside SysY semantics | false equivalence claim | keep overlapping bodies simple; document the surrogate; inspect domain and UB |
