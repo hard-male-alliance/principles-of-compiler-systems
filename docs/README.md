@@ -7,6 +7,10 @@
 1. [上机大作业总体要求](上机大作业总体要求.md)：模块划分、评分、功能要求、提交内容及学术诚信要求。
 2. [预备工作：了解你的编译器](预备工作-了解你的编译器.md)：5 分预备作业、报告规范、MLIR 进阶任务和示例程序。
 
+已完成的可复现实验位于 [`../preflight/`](../preflight/README.md)，对应的 LNCS 论文工程位于
+[`../report/`](../report/README.md)，方法与验收决策记录在 [`knowledge/`](knowledge/)，外部资料核查记录在
+[`research/`](research/preflight-research.md)。
+
 ## SysY 规范
 
 1. [SysY 2022 语言定义](SysY2022语言定义-V1.md)：语法、词法与语义约束。
