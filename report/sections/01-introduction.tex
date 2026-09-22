@@ -1,0 +1,16 @@
+\section{引言}
+\label{sec:introduction}
+
+把源文件称为“经过编译器变成可执行文件”会掩盖三个不同层次的问题：语言前端如何判定程序有意义，中间表示如何在保持语义的同时改变形态，以及目标文件如何借助应用二进制接口（Application Binary Interface, ABI）与运行时组成进程映像。Clang 本身是协调预处理、编译、汇编与链接的驱动程序；这些逻辑阶段可以融合执行，因而只有保存阶段产物才能辨认其契约\cite{clangToolchain,clangCommand}。LLVM 以类型化操作和静态单赋值（Static Single Assignment, SSA）连接语言前端与多种目标后端\cite{lattner2004llvm}，而 RISC-V ELF psABI 进一步约束寄存器、栈、重定位和链接行为\cite{riscvPsabi}。
+
+本文回答三个问题：第一，同一个 SysY 程序中的数组、循环、递归和短路求值，如何依次出现在预处理文本、抽象语法树（Abstract Syntax Tree, AST）、LLVM IR 和 RV64 汇编中？第二，手写 IR 与汇编在何种 ABI 和运行时条件下，才可被称为与源码等价？第三，MLIR 的多级抽象对专用加速器程序有何表达价值，在缺少 CANN、BiSheng 工具链和 NPU 时又能支持多强的结论？
+
+本文的主要贡献如下：
+\begin{enumerate}
+  \item 建立带明确输入域和五个夹具的语义中心；在本机与 RV64 交叉环境验证不同表示；
+  \item 从数据结构而非命令清单出发，对照 AST、SSA 控制流、RV64 调用约定及 ELF 链接边界；
+  \item 审计课程运行时二进制与头文件，定位预编译库的 \texttt{\_impure\_ptr} 依赖和头文件全局量多重定义，并以同工具链重建运行时消除偶然兼容；
+  \item 将 AscendNPU IR VecAdd 限定为静态结构研究，明确区分结构存在、方言编译与设备运行三种证据强度。
+\end{enumerate}
+
+全文采用“观测—解释—边界”的叙述纪律：测试输出、工具版本和结构检查是观测；基于规范的机制说明是解释；未执行的专用工具链不写成实验结果。

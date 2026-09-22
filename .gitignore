@@ -8,6 +8,7 @@
 # 常见构建目录 / Common build directories
 build/
 cmake-build-*/
+/output/
 
 # 操作系统与编辑器临时文件 / OS and editor temporary files
 .DS_Store

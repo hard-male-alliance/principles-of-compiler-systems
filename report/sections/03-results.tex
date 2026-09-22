@@ -1,0 +1,73 @@
+\section{流水线结构分析与实验结果}
+\label{sec:results}
+
+\subsection{预处理、AST 与语义边界}
+
+预处理器（preprocessor）产物 \texttt{compiler\_tour.i} 展开强制包含的三个运行时声明、处理行标记并移除注释；函数体则保持接近原始 SysY。这里的关键观察不是“文件变长”，而是运行时函数从源码外部的环境假设变成后续解析器可见的类型化声明。由于示例本身不依赖宏，本文不把该产物误写成宏优化实验。
+
+Clang 前端（frontend）随后完成解析、名称绑定和类型检查。AST JSON 的根为 \texttt{TranslationUnitDecl}；\texttt{FunctionDecl} 节点承载 \texttt{mark}/\texttt{fib}/\texttt{sum}/\texttt{main} 的签名，\texttt{DeclRefExpr} 把调用和变量使用绑定到声明，\texttt{ArraySubscriptExpr} 与 \texttt{WhileStmt} 则仍保留源语言结构。表达式 \texttt{\&\&} 在 AST 中仍是一个带语言语义的二元操作；它到 IR 阶段才被展开为基本块和条件跳转。AST 因而是“源级含义已判定、目标布局尚未选择”的边界，相关接口与官方示例由 Clang 文档定义\cite{clangAst}。
+
+\subsection{LLVM IR：数据流、地址与短路}
+
+手写模块只使用目标无关的 \texttt{i32} 运算和 \texttt{ptr}。LLVM 17 起不透明指针是唯一受支持的指针模型；内存操作的值类型仍分别写在 \texttt{load}/\texttt{store} 和 \texttt{getelementptr}（GEP）的源元素类型上\cite{llvmOpaque,llvmLangRef}。因此“指针不带指向类型”并不等于内存无类型。
+
+\texttt{sum} 的循环头用两个 $\phi$ 节点同时表示归纳变量与累计值：来自入口边的初值分别为 0，来自循环体回边的值分别是 \texttt{next\_i} 和 \texttt{next\_total}。这消除了为标量建立栈槽的特殊情况，使合流点成为数据流的普通组成。GEP \texttt{getelementptr i32, ptr \%values, i32 \%i} 只计算第 $i$ 个元素地址，不读取内存；在 \texttt{main} 中，二维索引形式先穿过 \texttt{[8 x i32]} 聚合，再选择元素。
+
+短路求值被拆成 \texttt{short\_lhs}、\texttt{short\_rhs}、\texttt{then} 和 \texttt{else} 四个基本块。只有 \texttt{n>2} 的边到达 \texttt{short\_rhs}，故 \texttt{call @mark} 在 C1--C3 中不可达；输出第二行的 0/1 直接验证这一控制依赖。与“先计算两个布尔值再相与”的写法相比，该结构保留了右操作数的副作用语义。
+
+\subsection{受控优化对照}
+
+表~\ref{tab:optimization}是同一 Clang 18.1.3、同一输入与目标的词法统计。\texttt{-O0} 以栈槽和显式访存映射源程序；\texttt{-O2} 将可提升标量转成 SSA 合流值，使 \texttt{alloca} 从 10 降至 1。把 \texttt{alloca}/\texttt{load}/\texttt{store} 合称显式内存操作，其计数从 $10+29+20=59$ 降至 $1+11+13=25$（$-57.6\%$）。RV64 汇编的近似指令行从 156 降至 104（$-33.3\%$）。
+
+\begin{table}
+\caption{Clang 18.1.3 的 \texttt{-O0}/\texttt{-O2} 静态对照}
+\label{tab:optimization}
+\centering
+\begin{tabular}{lrr}
+\toprule
+词法指标 & \texttt{-O0} & \texttt{-O2} \\
+\midrule
+LLVM IR \texttt{alloca}/\texttt{load}/\texttt{store} & 10/29/20 & 1/11/13 \\
+LLVM IR 总指令行 & 119 & 161 \\
+RV64 近似指令行/指示行 & 156/60 & 104/47 \\
+RV64 不同助记符数 & 20 & 24 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+值得注意的是，O2 的 LLVM IR 总指令行反而由 119 增至 161，不同 RV64 助记符也由 20 增至 24。这可由循环变换、控制流重写和目标相关准备引入更多显式 IR，而最终后端仍生成更少汇编行。因而词法计数揭示结构变化，却不是动态性能代理；本文没有计时、预热或噪声模型，不声称 O2 在该程序上更快。
+
+\subsection{RV64 汇编、对象与链接}
+
+手写汇编遵守 RV64 psABI：整数参数和返回值使用 \texttt{a0--a7}（返回值主要在 \texttt{a0}），\texttt{fib} 保存被修改的 \texttt{s0}/\texttt{s1} 与 \texttt{ra}，\texttt{main} 的 80 字节栈帧保持 16 字节对齐；临时值使用调用者保存的 \texttt{t0--t6}\cite{riscvPsabi}。32 位 SysY 整数采用 \texttt{addw}/\texttt{addiw}/\texttt{mulw} 等字宽指令，数组下标左移两位后与基地址相加。短路结构则由 \texttt{ble} 先跳过右侧调用，再由 \texttt{beqz} 处理 \texttt{mark} 的返回值。
+
+汇编器（assembler）把符号助记符编码为 ELF 对象，但尚不知道运行时函数和部分地址的最终位置。\texttt{call fib}、\texttt{call putint} 以及对 \texttt{ticks} 的 \texttt{\%hi}/\texttt{\%lo} 访问把求值延迟为重定位；RISC-V psABI 规定了这些配对重定位及链接松弛规则\cite{riscvPsabi,riscvAsm}。链接器（linker）再合并三个学生对象之一、由同一交叉工具链重建的运行时、C 启动代码和静态 libc，解析符号并产生 Linux ELF。链接不是加载：QEMU 用户态在随后执行阶段才建立进程语义。
+
+\subsection{行为结果}
+
+表~\ref{tab:behavior}给出全部执行结果。每个分数的分母均为表~\ref{tab:cases}中的五个夹具；不存在只运行“典型输入”的路径。源码路径在此指 Clang 以 C 语法分析该 SysY 子集并注入最小运行时声明，而不是另一个独立 SysY 编译器。
+
+\begin{table}
+\caption{跨表示行为验证结果}
+\label{tab:behavior}
+\centering
+\begin{tabular}{llll}
+\toprule
+执行环境 & 表示 & 目标/运行方式 & 结果 \\
+\midrule
+本机 Linux & 源码 & x86-64 原生 & 5/5 PASS \\
+本机 Linux & 手写 LLVM IR & x86-64 原生 & 5/5 PASS \\
+QEMU Linux 用户态 & 源码 & RV64GC/LP64D & 5/5 PASS \\
+QEMU Linux 用户态 & 手写 LLVM IR & RV64GC/LP64D & 5/5 PASS \\
+QEMU Linux 用户态 & 手写汇编 & RV64GC/LP64D & 5/5 PASS \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+权威 Linux 配置中的五项 CTest（pipeline artifacts、advanced structure、optimization metrics、native equivalence、riscv equivalence）为 5/5 PASS。行为一致与结构检查相互补足：前者能发现某个输入上的语义差异，后者能发现“输出碰巧一致但对象目标错误”等类别问题。
+
+\subsection{运行时兼容性审计}
+
+预编译 \texttt{libsysy\_riscv.a} 的成员确为 RISC-V ELF，并声明 16 字节栈对齐及 double-float ABI；然而可重定位链接后仍存在 \texttt{\_impure\_ptr}、\texttt{fprintf}、\texttt{vfprintf} 等未解析符号。\texttt{\_impure\_ptr} 是 newlib 风格的可重入状态入口，这说明“机器类型与浮点 ABI 相符”不足以证明该归档可直接混入 glibc Linux 链接。权威流程没有用忽略未定义符号的选项掩盖问题，而是由 \texttt{riscv64-linux-gnu-gcc} 从 \texttt{sylib.c} 重建 \texttt{rv64gc/lp64d} 运行时。
+
+第二个缺陷位于 \texttt{lib/sylib.h}：它不仅声明函数，还定义九个计时全局量。客户端包含该头文件并再链接预编译库时，现代 GNU ld 对多个 \texttt{\_sysy\_*} 计时符号报告多重定义，包括 \texttt{start}、\texttt{end} 和 \texttt{idx} 对应的存储。这不是缺库，而是所有权错误。正确修复应把头文件改为 \texttt{extern} 声明，并在一个 C 翻译单元中保留唯一定义；为不破坏课程既有文件，本实验只注入实际使用的三个函数原型。
