@@ -29,7 +29,7 @@ factorial:
 
 \subsection{RV64 psABI 约束}
 
-RV64 ISA 定义机器操作语义，RISC-V psABI 则规定独立编译单元之间的调用接口及 ELF 约定\cite{riscv-isa-2026,riscv-psabi-1.0}。LP64D 调用约定使用 \code{a0--a7} 传递整数参数与返回值，\code{ra} 保存返回地址，\code{sp} 维护调用栈；\code{t0--t6} 为调用者保存寄存器，\code{s0--s11} 为被调用者保存寄存器。
+RV64 ISA 定义机器操作语义，RISC-V psABI 则规定独立编译单元之间的调用接口及 ELF 约定\cite{riscv-isa-2026,riscv-psabi-1.0}。LP64D 调用约定使用 \code{a0--a7} 传递整数参数，使用 \code{a0}/\code{a1} 承载至多两个寄存器返回值；\code{ra} 保存返回地址，\code{sp} 维护调用栈；\code{t0--t6} 为调用者保存寄存器，\code{s0--s11} 为被调用者保存寄存器。
 
 \code{factorial} 从 \code{a0} 读取参数，在 \code{t0} 和 \code{t1} 中维护循环状态，并将结果写回 \code{a0}。该函数没有进一步调用，因而无需保存 \code{ra}。\code{main} 包含多个调用，在 16 字节对齐的栈帧中保存和恢复返回地址。局部阶乘状态完全驻留于寄存器，说明源级局部变量与目标栈对象之间不存在固定的一一对应关系。
 

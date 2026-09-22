@@ -1,6 +1,6 @@
 # LNCS 中文论文
 
-本目录包含综述性案例研究《跨表示的编译语义保持：从 SysY 源程序到 RV64 ELF 可执行文件》。正文采用 Springer 官方 `llncs` 文档类和 `splncs04` BibTeX 样式；两文件来自 CTAN 的 Springer `llncs` 2.26 发行包（CC BY 4.0），上游说明见 `LLNCS-README.md`。
+本目录包含综述性案例研究《编译系统中的表示演化：从 SysY 源程序到 RV64 ELF 可执行文件》。正文采用 Springer 官方 `llncs` 文档类和 `splncs04` BibTeX 样式；两文件来自 CTAN 的 Springer `llncs` 2.26 发行包（CC BY 4.0），上游说明见 `LLNCS-README.md`。
 
 ## 构建
 

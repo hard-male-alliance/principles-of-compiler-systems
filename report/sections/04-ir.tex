@@ -37,7 +37,9 @@ LLVM 优化流水线由分析和变换通道组合，其默认构成随版本、
 \centering\small
 \begin{tabular}{@{}lrrrrrr@{}}
 \toprule
-级别 & IR 指令 & \code{alloca} & \code{load} & \code{store} & 汇编行 & 助记符\\
+& \multicolumn{4}{c}{LLVM IR} & \multicolumn{2}{c}{RV64 汇编}\\
+\cmidrule(lr){2-5}\cmidrule(l){6-7}
+级别 & 指令 & \code{alloca} & \code{load} & \code{store} & 指令行 & 助记符种类\\
 \midrule
 \code{-O0} & 56 & 9 & 13 & 13 & 77 & 13\\
 \code{-O2} & 30 & 0 & 0 & 0 & 45 & 15\\

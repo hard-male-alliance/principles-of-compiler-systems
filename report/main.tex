@@ -8,6 +8,7 @@
   columns=fullflexible,
   frame=none,
   numbers=none,
+  numberbychapter=false,
   breaklines=false,
   showstringspaces=false,
   keepspaces=true,
@@ -17,7 +18,7 @@
 }
 \lstset{style=evidence}
 \newcommand{\code}[1]{\texttt{#1}}
-\title{跨表示的编译语义保持：从 SysY 源程序到 RV64 ELF 可执行文件}
+\title{编译系统中的表示演化：从 SysY 源程序到 RV64 ELF 可执行文件}
 \titlerunning{从 SysY 源程序到 RV64 ELF 可执行文件}
 \author{作者 A\inst{1} \and 作者 B\inst{1}}
 \authorrunning{作者 A 与作者 B}
@@ -30,7 +31,7 @@
 \keywords{编译系统 \and 表示演化 \and LLVM IR \and 静态单赋值 \and RISC-V \and ELF \and MLIR}
 \end{abstract}
 \section*{作者贡献}
-作者 A：概念化、前端与 LLVM IR 分析、实验验证；作者 B：RV64 与 ELF 分析、可视化、论文排版。两位作者共同完成案例设计、文献核查、结果解释与论文审阅。
+作者 A：概念化、前端与 LLVM IR 分析、实验验证；作者 B：RV64 与 ELF 分析、可视化、论文编辑。两位作者共同完成案例设计、文献核查、结果解释与论文审阅。
 \input{sections/01-introduction}
 \input{sections/02-case}
 \input{sections/03-frontend}
