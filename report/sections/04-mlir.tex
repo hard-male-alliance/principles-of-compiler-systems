@@ -1,14 +1,15 @@
-\section{MLIR 进阶探索：把跨度变成层次}
+\section{MLIR 与 AscendNPU IR 静态探索}
 \label{sec:mlir}
 
-LLVM IR 适合表达较低层、接近通用机器模型的程序，但领域特有结构若过早被降低，后续优化将难以恢复其语义。MLIR 通过可扩展方言（dialect）、操作（operation）、类型和属性，让多个抽象层共存，并通过转换通道逐步降低\cite{lattner2021mlir}。其核心价值不只是“拥有更多 IR”，而是把每一次语义损失放到显式、可测试的边界上。
+LLVM IR 适合表达接近通用机器模型的程序，但领域信息若过早压平，后续优化难以恢复。多级中间表示（Multi-Level Intermediate Representation, MLIR）允许方言（dialect）、操作、类型和属性在多个抽象层共存，并用方言转换的合法化目标和类型转换逐步降低\cite{lattner2021mlir,mlirDialectConversion}。渐进式降低（progressive lowering）的工程价值不是自动保证正确或快速，而是把每次语义损失变成显式、可检查的边界。
 
-进阶实验以 AscendNPU IR 的 VecAdd 快速入门为文档驱动对象\cite{ascendVecAdd}，并保存每个可观察阶段的文本 IR、工具版本、完整命令与诊断。官方流程要求加载 CANN 的 \texttt{set\_env.sh} 环境、调用 \texttt{bishengir-compile}，且端到端执行依赖实际 Ascend NPU；因此在满足这些前提并取得运行日志之前，本文只声称“静态复现方案”，不声称已完成编译或上板。由于相关工具链和示例可能演化，本文也不预先断言确切方言序列；实际报告应从运行日志中提取阶段名称。对每个相邻阶段 $S_k \rightarrow S_{k+1}$，记录：
+进阶目录中的 \texttt{add.mlir} 保存 AscendNPU IR 官方 VecAdd 数据通路的最小静态资产\cite{ascendVecAdd}。结构检查确认以下顺序与属性同时存在：
 \begin{enumerate}
-  \item 哪些操作、类型或属性被消去、引入或重写；
-  \item 并行、向量、内存空间及设备映射等信息在哪一层仍然显式；
-  \item 转换是否合法化（legalization）了哪些操作，失败时诊断指向何种未满足约束；
-  \item 能否通过解释执行、编译运行或结构不变量检查建立语义保持证据。
+  \item \texttt{hacc.entry} 与 \texttt{DEVICE} 标记设备 kernel 入口；
+  \item 两个 \texttt{hivm.hir.load} 把 16 个 \texttt{i16} 元素从全局内存（\texttt{gm}）搬到统一缓冲区（\texttt{ub}）；
+  \item \texttt{hivm.hir.vadd} 在 \texttt{ub} 层执行向量加法；
+  \item \texttt{hivm.hir.store} 把结果从 \texttt{ub} 写回 \texttt{gm}。
 \end{enumerate}
+该表示在降到 LLVM IR 前仍显式保留设备入口、存储层次、搬运与向量操作，展示了多级 IR 相比立即压成指针算术的优势。
 
-预计观察阶段数为 \MLIRStageCount。该字段只能由保存的通道日志计算。若受硬件、驱动或封闭组件限制而无法端到端运行，则将“成功复现”“静态阅读确认”和“基于架构的推断”分别标注；文档中的预期流水线不能冒充本地观测。最终应以一张“抽象层级---保留语义---目标约束”的表格比较 MLIR 与单层 LLVM IR，而不是把方言名称简单罗列。
+\texttt{advanced\_structure} 测试检查关键方言标记以及 \texttt{load $\rightarrow$ vadd $\rightarrow$ store} 的文本顺序，并在 Linux CTest 中通过。其证据强度仅为“教学资产包含预期静态结构”：普通 \texttt{mlir-opt} 不认识 \texttt{hacc}/\texttt{hivm} 方言；完整路径还需要 CANN 环境、\texttt{bishengir-compile}、匹配的驱动和 Ascend NPU。本文未执行方言解析、专用降低、生成设备对象或上板验证，因此不声称 VecAdd 已编译或运行。

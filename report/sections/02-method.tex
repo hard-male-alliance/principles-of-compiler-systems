@@ -1,52 +1,42 @@
-\section{研究对象与方法}
+\section{研究对象与实验方法}
 \label{sec:method}
 
-\subsection{示例程序与语义覆盖}
+\subsection{单一语义中心}
 
-研究对象应是一个规模小但覆盖面明确的 SysY 程序。计划采用“数组聚合后分支修正”的单一程序：辅助函数通过循环遍历数组并累加，主函数读入数据、调用辅助函数，再依据阈值选择输出路径。表~\ref{tab:coverage}给出特征到证据的映射。最终源文件路径和确定输入应在实验实现后补入，而非在此稿中臆造。
+\texttt{preflight/src/compiler\_tour.sy} 是三种实现的共同规格。程序先把输入 $n$ 限制在 $[0,8]$，再用循环填充八元素局部数组；\texttt{sum} 遍历有效前缀，\texttt{fib} 递归计算小规模 Fibonacci 数。当且仅当 $n>2$ 时，表达式 \texttt{n > 2 \&\& mark()} 才调用带副作用的 \texttt{mark}，全局量 \texttt{ticks} 因而成为短路求值是否正确的可观察证据。限制输入同时消除了数组越界、递归爆炸与有符号整数溢出等混杂因素。
+
+表~\ref{tab:cases}列出五个测试夹具。测试驱动将每个整数连同换行写入标准输入，逐字节比较标准输出并要求退出状态为零；只把 Windows 行尾统一为 LF，不删除其他空白。标准错误单独保存，因为 SysY 运行时析构器会输出计时信息。
 
 \begin{table}
-\caption{语言特征、低层结构与验证证据的对应关系}
-\label{tab:coverage}
+\caption{共享测试夹具及其覆盖意图}
+\label{tab:cases}
 \centering
-\begin{tabular}{lll}
+\begin{tabular}{crrl}
 \toprule
-SysY 特征 & LLVM IR / RISC-V 观察点 & 验证证据 \\
+编号 & 输入 & 输出两行 & 覆盖意图 \\
 \midrule
-数值运算与赋值 & 算术指令、寄存器或栈槽 & 已保存 IR/汇编 \\
-条件分支 & 基本块、条件跳转 & 控制流图与路径用例 \\
-循环 & 回边、归纳变量 & 边界与多次迭代用例 \\
-函数调用 & \texttt{call}、调用约定 & 参数/返回值一致性 \\
-数组访问 & \texttt{getelementptr}、地址计算 & 多元素输入用例 \\
-运行时输入输出 & 外部符号与链接重定位 & 标准输出和链接映射 \\
+C1 & $-3$ & $0,0$ & 下界截断、空循环、短路 \\
+C2 & $0$  & $0,0$ & 零长度数组前缀 \\
+C3 & $2$  & $11,0$ & 循环执行但右操作数不求值 \\
+C4 & $5$  & $50,1$ & 递归与短路右操作数 \\
+C5 & $20$ & $197,1$ & 上界截断为 8 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\subsection{四阶段工具链观察}
+\subsection{表示、环境与判定}
 
-对同一源文件分别停止在预处理、编译、汇编和链接之后，保留以下制品：
-\begin{description}
-  \item[预处理器（preprocessor）] 展开头文件、宏与条件编译，产生仍接近源语言的翻译单元；通过预处理输出确认声明的来源。
-  \item[编译器（compiler）] 完成词法、语法与语义分析，构造中间表示并执行优化，最终生成目标汇编；通过未优化和优化 IR 的差分观察结构变化。
-  \item[汇编器（assembler）] 将助记符编码为可重定位目标文件，生成符号表和重定位项；通过反汇编检查机器指令与源汇编的对应。
-  \item[链接器（linker）] 解析符号、应用重定位并组合运行时库，产生可执行文件；通过符号表和链接映射确认 SysY 运行时接口的绑定。
-\end{description}
+三份作者维护的表示分别是 SysY 源码、采用不透明指针（opaque pointer）的手写 LLVM IR，以及遵循 GNU 汇编语法的手写 RV64GC 程序。源码路径用 \texttt{-include} 强制载入 \path{preflight/include/sysy_builtin.h}，注入三个运行时函数的最小声明；它不修改 SysY 文件，也不包含存在缺陷的 \texttt{sylib.h}。权威 Linux 环境使用 Ubuntu Clang 18.1.3，交叉目标为 \path{riscv64-unknown-linux-gnu}，ISA/ABI 组合为 \texttt{rv64gc/lp64d}。最终静态 Linux ELF 由 \texttt{qemu-riscv64} 用户态执行；QEMU 在这里翻译 Linux 系统调用，而非模拟无操作系统的整机\cite{qemuUser}。
 
-这种分层描述刻意区分工具边界与编译器内部阶段。ELF（Executable and Linkable Format）目标文件中的节、符号和重定位项，是汇编器与链接器之间可直接检查的契约\cite{elfspec2024}。
-
-\subsection{三种实现与差分判定}
-
-以 SysY/参考编译路径作为基线，人工编写等价 LLVM IR，并以 RISC-V 指令集架构（Instruction Set Architecture, ISA）实现汇编版本\cite{riscv20240411}。LLVM IR 使用不透明指针（opaque pointer）语法，以匹配当前 LLVM 版本的表示约定\cite{llvmLangRef}; RISC-V 版本遵守工具链选定的应用二进制接口（Application Binary Interface, ABI）。
-
-对每个测试夹具，驱动脚本记录标准输入、标准输出、标准错误和退出状态。判定函数为
+令 $P$ 为执行路径集合，$T$ 为五个夹具。路径 $p$ 的通过条件为
 \begin{equation}
-  \operatorname{pass}(i)=
-  \bigwedge_{p \in \{\mathrm{source},\mathrm{IR},\mathrm{asm}\}}
-  \left(O_{p,i}=O_{\mathrm{oracle},i}\ \land\ E_{p,i}=E_{\mathrm{oracle},i}\right),
+ \operatorname{pass}(p)=\bigwedge_{t\in T}
+ \left(\operatorname{stdout}(p,t)=G_t \land \operatorname{exit}(p,t)=0\right),
 \end{equation}
-其中 $O$ 是规范化后的标准输出，$E$ 是退出状态。规范化仅允许消除约定明确的行尾差异，不能吞掉空白、诊断或数值差异。测试集至少覆盖零次循环、一次循环、多次循环、条件两侧路径及数组边界附近的合法输入。
+其中 $G_t$ 是版本库中直接编码的黄金输出。该判据验证测试域上的可观察等价而非所有输入上的形式等价；这一边界将在第~\ref{sec:threats}节讨论。
 
-\subsection{优化对照}
+\subsection{流水线与证据层次}
 
-在源程序、目标三元组（target triple）和运行时库不变时，对比 \texttt{-O0} 与一个已记录的优化级别。比较维度包括基本块数、静态指令数、栈访问和关键优化现象；性能只在有重复次数、预热策略与计时方法时报告。优化后汇编更短并不自动意味着更快，因而结构指标与运行时间必须分开解释。
+构建系统以 CMake/Ninja 生成预处理文本、AST JSON、编译器生成 IR、RV64 汇编和三个 ELF64 小端 RISC-V 可重定位对象。结构检查直接读取 ELF 头并要求 \texttt{e\_machine=EM\_RISCV}，而非依据扩展名猜测格式。完整 Linux 流程再从 \texttt{lib/sylib.c} 重建运行时、链接三条 RV64 路径并执行测试。四项 CTest 分别覆盖 pipeline、advanced、native 和 riscv；它们检验不同证据面，不能用一个“构建成功”互相替代。
+
+实验还对同一源码、同一 Clang 18.1.3 和相同声明注入执行受控的 \texttt{-O0}/\texttt{-O2} IR 与 RV64 汇编对照。本文报告词法统计和可复核结构，不以静态计数推断运行时间。

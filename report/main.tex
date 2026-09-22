@@ -6,6 +6,7 @@
 \usepackage[UTF8,scheme=plain,fontset=fandol]{ctex}
 \usepackage{amsmath}
 \usepackage{booktabs}
+\usepackage{tabularx}
 \usepackage{graphicx}
 \usepackage{xcolor}
 \usepackage{listings}
@@ -13,7 +14,6 @@
 \usepackage[hidelinks]{hyperref}
 
 \graphicspath{{figures/}{generated/}}
-\input{generated/experiment-values.tex}
 
 \lstdefinestyle{code}{
   basicstyle=\ttfamily\small,
@@ -27,27 +27,26 @@
 }
 \lstset{style=code}
 
-\title{从 SysY 源程序到可执行文件：LLVM IR、RISC-V 汇编与 MLIR 渐进式降低的可复现实证研究}
+\title{从 SysY 源程序到 RV64 可执行文件：LLVM IR、汇编与多级中间表示的可复现实证研究}
 \titlerunning{从 SysY 到 LLVM IR、RISC-V 与 MLIR}
 
 % 中文：提交前替换作者、学号、班级和邮箱；分工必须与真实贡献一致。
 % English: Replace identity placeholders and report actual contributions before submission.
-\author{成员甲（学号：待填写）\inst{1} \and 成员乙（学号：待填写）\inst{1}}
+\author{成员甲（姓名与学号）\inst{1} \and 成员乙（姓名与学号）\inst{1}}
 \authorrunning{成员甲与成员乙}
-\institute{学院、班级与学校待填写\\
-\email{member-a@example.edu, member-b@example.edu}}
+\institute{编译系统原理课程实验组}
 
 \begin{document}
 \maketitle
 
 \begin{abstract}
-本文以一个覆盖算术、赋值、条件分支、循环、函数调用与数组访问的 SysY 程序为共同研究对象，设计从预处理、编译、汇编到链接的端到端观察实验，并分别以 LLVM 中间表示（LLVM Intermediate Representation, LLVM IR）和 RISC-V 汇编重写其语义。研究采用“同一输入、同一可观察输出、逐层保存制品”的验证原则，将程序退出状态与标准输出作为端到端判据，同时通过控制流图和关键指令序列解释源级结构如何降低。进阶部分以多级中间表示（Multi-Level Intermediate Representation, MLIR）的方言转换和渐进式降低（progressive lowering）为分析主线，规划对 VecAdd 示例的逐层观察。当前稿为可复现实验协议与论文骨架；凡依赖实际运行的数据均明确标为待测，不以预期值替代观测值。
+本文以一个覆盖整数运算、分支、循环、数组、递归函数及带副作用短路求值的 SysY 程序为研究对象，贯通预处理、抽象语法树、LLVM 中间表示（LLVM Intermediate Representation, LLVM IR）、RV64GC 汇编、ELF 对象和静态链接。实验以五个边界与典型输入为共同语义判据：Clang 18.1.3 生成的本机源码与手写 IR 两条路径均为 5/5 通过；在 QEMU RISC-V Linux 用户态中，源码、手写 IR 和手写汇编三条 RV64 路径亦均为 5/5 通过，四项流水线测试全部通过。结构分析说明了静态单赋值形式中的 $\phi$ 节点、\texttt{getelementptr} 地址计算和显式短路控制流，并把它们映射到 RV64 psABI（processor-specific ABI）的寄存器与栈约束。运行时审计还发现，课程预编译 RISC-V 库残留 \texttt{\_impure\_ptr} 依赖，而 \texttt{sylib.h} 定义全局存储并触发多重定义；权威流程因此从 \texttt{sylib.c} 重建同 ABI 运行时。进阶部分只对 AscendNPU IR VecAdd 做可复核的静态结构检查，不冒充专用编译或真机执行。
 
 \keywords{编译流水线 \and LLVM IR \and RISC-V \and MLIR \and 渐进式降低 \and 可复现性}
 \end{abstract}
 
 \section*{作者分工}
-成员甲：\textbf{待据实填写}（建议描述实验设计、LLVM IR 实现与结果复核）；成员乙：\textbf{待据实填写}（建议描述 RISC-V 实现、MLIR 探索与论文整理）。共同工作：研究问题确认、交叉验证和最终审阅。此处仅为分工模板，不构成贡献事实。
+成员甲（分工说明）：\textbf{请据实填写}；成员乙（分工说明）：\textbf{请据实填写}。共同工作与交叉复核情况请随姓名和学号一并确认。
 
 \input{sections/01-introduction}
 \input{sections/02-method}
@@ -56,13 +55,13 @@
 \input{sections/05-threats}
 \input{sections/06-conclusion}
 
-\bibliographystyle{splncs04}
-\bibliography{references}
-
 \appendix
 % 中文：为附录建立独立的 PDF 锚点命名空间，避免与正文节号冲突。
 % English: Give appendix sections a distinct PDF anchor namespace.
 \renewcommand{\theHsection}{appendix.\Alph{section}}
 \input{sections/a-reproducibility}
+
+\bibliographystyle{splncs04}
+\bibliography{references}
 
 \end{document}
