@@ -1,0 +1,97 @@
+\section{优化：先证明可以改，再判断值得改}
+\label{sec:optimization}
+
+把三路截断控制流写成 \texttt{select}、把标量循环改成向量循环，看起来都像“更快的写法”。但优化器必须回答两个彼此独立的问题：改写是否保留源程序承诺的行为，以及在特定目标和工作负载上是否比原形状更划算。前者是合法性（legality）的硬约束，后者是盈利性（profitability）的工程判断。图~\ref{fig:optimization-gates} 将它们画成前后两道门；不能通过第一道门的候选，无论估计性能多高都不是优化。
+
+\input{figures/optimization-gates}
+
+\subsection{分析是关于程序图的不动点计算}
+
+优化并非先遍历文本，再凭模式猜测。分析通常在一个抽象域 \((L,\sqsubseteq)\) 中为每个基本块求事实。以正向“必须成立”分析为例，块 \(B\) 的入口事实来自所有前驱的合流，块内语句由单调传递函数 \(F_B\) 更新它：
+\begin{equation}
+  IN_B=\bigwedge_{P\in \operatorname{pred}(B)}OUT_P,
+  \qquad OUT_B=F_B(IN_B).
+  \label{eq:dataflow-fixed-point}
+\end{equation}
+对 CFG 反复应用这些方程，直至事实不再改变，就得到一个不动点（fixed point）。在有限高度格上单调迭代会终止；区间等无限域通常需要 widening 等近似手段。这里的“抽象”很具体：常量传播的格元素可表示未知、某个常量或冲突；区间分析保存上下界；别名分析保存两个访问必定、可能或不可能重叠。
+
+在 \texttt{clipped\_dot} 中，\textit{loop} 同时接收入口边与回边。常量传播第一次看到 \(i=0\)，回边又带来 \(i+1\)，很快便只能把 \(i\) 记为“非常量”；区间分析则可能保留 \(i\ge0\)，并在 \textit{body} 的真分支上利用 \(i<n\)。\texttt{main} 还建立了 \(0\le n\le8\)，但这个事实要穿过函数边界，需要内联、过程间分析或显式参数契约。于是，同一套方程也揭示了工程权衡：更强的关系域和过程间上下文能证明更多边界与别名事实，却消耗更多时间和内存；生产编译器必须在精度、可扩展性和诊断稳定性之间选择。
+
+SSA 让这类分析变得稀疏：\texttt{\%acc.next} 的使用者可由 def--use 链直接找到，无须在每个程序点维护所有变量。但 load 的结果仍可能受别名 store 或未知调用影响，所以普通 SSA 从未消灭内存分析，只是把纯值问题从内存问题中剥离出来。
+
+\subsection{合法改写是语义精化，不是文本相似}
+
+设局部程序片段 \(p\) 在前置条件 \(C\) 下被改写为 \(q\)，并把两者的执行投影到共同的可观察行为集合 \(\operatorname{Beh}\)。有未定义行为或未指定选择时，要求行为完全相等往往过强；更合适的局部义务是
+\begin{equation}
+  C\Longrightarrow
+  \operatorname{Beh}(q)\subseteq\operatorname{Beh}(p).
+  \label{eq:local-refinement}
+\end{equation}
+即目标可以选定源程序允许的某种实现，但不能产生源程序没有承诺的行为。这里的包含方向称为语义精化（semantic refinement）；它不是在声称本文已经形式化整个 LLVM，而是给“合法”一个可讨论的方向\cite{llvm-alive2,llvm-vellvm2012}。
+
+案例的截断函数在 \(lo\le hi\) 时满足
+\[
+  \begin{split}
+  c(x)&=\begin{cases}
+    lo,&x<lo,\\
+    hi,&x\ge lo\land x>hi,\\
+    x,&\text{otherwise}
+  \end{cases}\\[-1mm]
+  &=\max(lo,\min(x,hi)).
+  \end{split}
+\]
+因此，控制流形式可以合法地规范化为比较、\texttt{select} 与 \texttt{llvm.smin} 组成的无分支值表达式。它保留的是截断函数，而不是原来“经过了哪些块”的轨迹；若边界关系未知，或分支中含有不能无条件执行的副作用/陷阱，把控制依赖直接变成数据依赖就未必合法。
+
+溢出与 poison 也属于同一道合法性门。把普通 \texttt{add} 换成 \texttt{add nsw} 会把原本定义的环绕结果变成 poison，只有在源语义已排除有符号环绕时才成立；对可能为 poison 的值进行投机执行，还必须保证它不会比原程序更早流入分支、地址或其他触发未定义行为的位置。\texttt{freeze} 有时能固定这种不确定性，但会改变可用的等价式，不应被当成万能修补。换言之，代数恒等式、LLVM 位向量语义和源语言溢出规则是三个必须对齐的层次。
+
+\subsection{从可寻址变量到可向量化归约}
+
+优化的关键通常不是一个神奇 pass，而是表示形状逐步消除偶然约束。未优化的前端 IR 常把 \texttt{i}、\texttt{acc} 和临时量放入 \texttt{alloca}：
+\begin{lstlisting}[language=LLVMIR,basicstyle=\ttfamily\scriptsize]
+%acc = alloca i32, align 4
+store i32 0, ptr %acc, align 4
+...
+%old = load i32, ptr %acc, align 4
+%new = add i32 %old, %term
+store i32 %new, ptr %acc, align 4
+\end{lstlisting}
+当地址没有逸出且访问可提升时，mem2reg/SROA 将它改成循环头 \texttt{phi} 与直接的 def--use 链；控制流简化和指令组合再把截断的块结构规范化为逐元素的值运算\cite{llvm-passdocs}。这些改写本身未必带来明显速度提升，却使“归纳变量”“归约”和“逐项 clamp”成为下游能识别的形状。
+
+随后，循环向量化器可以构造宽向量主体、水平归约与标量尾部。对本例而言，每个迭代读取 \texttt{a[i]} 和 \texttt{b[i]}、逐项相乘并截断，然后加到累加器。向量化要保持以下依赖：同一元素内先乘再截断，所有截断结果最终参与归约；它可以改变独立元素之间的执行次序。由于每项已在 \([-8,12]\) 内、最多八项，整数和位于 \([-64,96]\)，重排归约不会产生有符号溢出。若把元素换成通常的 IEEE--754 浮点数，加法结合律会受舍入破坏；没有 fast-math 一类明确放宽时，同样的重排不再自动合法。
+
+内存是另一道约束。本例只读取 \texttt{a} 与 \texttt{b}，即使两者别名，同时读取相同位置也不制造跨迭代读写依赖，所以不必为了这次向量化虚构 \texttt{noalias}。若循环改为写 \texttt{a[i]} 并读取 \texttt{b[i-1]}，重叠实参可能让下一迭代读到刚写入的数据；优化器必须证明不别名、生成运行时别名检查并保留标量版本，或放弃向量化\cite{llvm-aa,llvm-vectorizers}。更激进的属性不是“性能开关”，而是调用者必须共同遵守的语义承诺。
+
+表~\ref{tab:optimization-chain} 把这条链压缩为机制而非 pass 清单。每一步既消除一种表示偶然性，也可能在新的约束前停下。
+
+\begin{table}[t]
+  \centering
+  \caption{案例优化链中的形状、机会与约束}
+  \label{tab:optimization-chain}
+  \scriptsize
+  \begin{tabular}{p{0.23\textwidth}p{0.30\textwidth}p{0.35\textwidth}}
+    \toprule
+    表示变化 & 为下一步显露的结构 & 主要约束 \\
+    \midrule
+    load/store 局部量 $\to$ SSA & 归纳变量与累加递推 & 地址逸出、volatile、未知内存效应 \\
+    分支截断 $\to$ 值表达式 & 逐通道的 min/max/select & 副作用、陷阱、poison 与边界关系 \\
+    标量迭代 $\to$ 向量主体 & 独立元素并行与水平归约 & 循环携带依赖、别名、溢出/浮点语义 \\
+    主体加标量尾部 & 任意 \(n\) 的覆盖 & 额外 CFG、代码尺寸与短循环开销 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{盈利性：正确候选仍可能被拒绝}
+
+通过合法性门后，优化器面对的不是唯一“最优 IR”，而是一组语义允许的候选。可把目标相关选择概括为
+\[
+ Q^*\in\arg\min_{Q\in\mathcal{L}(P)}
+ \bigl(C_{time}(Q),C_{size}(Q),C_{compile}(Q),C_{energy}(Q)\bigr).
+\]
+其中 \(\mathcal{L}(P)\) 是通过合法性检查的候选集合。这是一个多目标问题而非可直接比较的四元组；实际成本模型依优化级别、目标变换信息（Target Transform Info, TTI）、代码布局和经验启发式，把目标折算或分阶段决策。
+
+向量化清楚展示了这种区别。面向具有合适 SIMD 指令的 x86-64，宽 load、逐通道截断和归约可能摊薄循环控制成本；面向当前案例的 RV64GC（未启用 RISC-V V 扩展），同样的向量 IR 可能需要拆回标量，代码尺寸和尾部处理反而更贵。因此保存的 RV64GC 版本采用标量 \texttt{lw}/\texttt{mulw}/\texttt{addw} 循环并不与“向量化合法”矛盾：合法性回答\emph{能否}，目标成本回答\emph{是否值得}。短循环、冷代码或寄存器压力较高时，即便目标有向量指令，也可能合理拒绝。
+
+盈利性判断天然不完美。静态模型不知道部署时输入分布和微架构状态；基于剖面的优化能补充频率信息，却会带来训练代表性与构建流程成本。更全面的全局搜索也许找到更好的代码形状，却增加编译延迟。LLVM 的 Pass Manager 因而把分析结果按 IR 单元缓存，并要求变换准确声明哪些结果仍有效；失效过多会重复计算，失效不足则会让后续优化依赖过期事实\cite{llvm-newpm}。
+
+\paragraph{本层原则。}
+优化可以看成“抽象解释建立事实，语义精化筛掉错误候选，成本模型在合法候选中作出目标相关选择”。这比背诵 pass 名单更接近真实系统：规范化负责让机会可见，分析负责证明边界，盈利性负责接受现实资源约束。选定的 IR 仍只是一个抽象机器程序；下一层将把这些自由度兑换成 RV64 的指令、寄存器和调用约定。

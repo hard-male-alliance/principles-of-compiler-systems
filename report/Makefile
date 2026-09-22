@@ -1,5 +1,4 @@
-# 中文：论文构建入口；所有派生文件均留在 report/build。
-# English: Paper build entry point; all derived files stay in report/build.
+# Portable paper commands / 可移植论文命令
 .PHONY: all clean
 
 all:

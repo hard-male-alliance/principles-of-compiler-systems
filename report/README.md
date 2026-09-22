@@ -1,33 +1,33 @@
-# LNCS 中文实验报告
+# 《深入理解编译系统》LLNCS 报告
 
-本目录是“预备工作——了解你的编译器”的论文工程。正文采用 Springer 官方 `llncs` 文档类和 `splncs04` BibTeX 样式；两文件来自 CTAN 的 Springer `llncs` 2.26 发行包（CC BY 4.0），上游说明见 `LLNCS-README.md`。
+本目录是预备作业的中文教程式综述工程。正文使用 Springer `llncs` 文档类，以一个 SysY
+截断点积贯穿十个逻辑章节：从前端、LLVM IR、优化与 RV64，一直读到 ELF、进程映像和
+MLIR。形式化定义用于解释设计，七幅 TikZ/PGFPlots 矢量图用于呈现跨层结构；配套源码、
+手写 LLVM IR、RV64GC 汇编及运行检查位于 [`../preflight/`](../preflight/)。
 
 ## 构建
 
-需要 XeLaTeX、BibTeX、`latexmk`，以及 TeX Live/MiKTeX 中的 `ctex`、`booktabs`、`listings`、`hyperref` 等常见宏包。
+需要 XeLaTeX、BibTeX、`latexmk`，以及包含 `llncs.cls` 与 `splncs04.bst` 的 TeX 发行版：
 
 ```sh
 cd report
 latexmk -r latexmkrc main.tex
 ```
 
-输出为 `build/main.pdf`。清理命令：
+PDF 输出为 `report/build/main.pdf`。清理生成物：
 
 ```sh
 latexmk -r latexmkrc -C main.tex
 ```
 
-也可在提供 POSIX `make` 的环境中执行 `make` / `make clean`。请勿使用 `geometry` 或手工修改页边距覆盖 LNCS 版式。
+七幅图的可编辑源码位于 [`figures/`](figures/)，共享视觉语法定义在 `preamble.tex`；不需要
+额外的 JavaScript 或图片生成步骤。
 
-## 实验证据与提交
+## 提交前必须修改
 
-论文中的实验结果来自 `preflight/` 的版本化程序、测试驱动与结构检查；可复现命令列于论文附录。提交前唯一需要人工填写的内容是两位作者的姓名、学号及真实分工。填写后应从干净检出重新构建并检查日志与最终 PDF，不要直接修改构建目录中的派生文件。
+1. 在 `main.tex` 中把两位作者、学号、班级与小组占位符替换为真实信息。
+2. 核对“作者分工”表，并确保两位组员都在课程平台提交同一份 PDF。
+3. 先执行 `preflight` 的完整验证，再从干净目录重建论文并检查日志和渲染页。
 
-## 上游文件校验
-
-下载日期：2026-09-22；来源：`https://mirrors.ctan.org/macros/latex/contrib/llncs/`。
-
-| 文件 | SHA-256 |
-|---|---|
-| `llncs.cls` | `E9894C92191FCD195EEF3120A36D2F75B52030EADCBDC3CE146317974654821F` |
-| `splncs04.bst` | `F36C3A17E5304A692706359AAFA9DE709395A085E579EB47C027095AEAABDE96` |
+本仓库不复制 Springer 模板文件；构建环境直接使用 TeX Live 提供的 `llncs` 包，避免维护
+一份易过期的模板副本。

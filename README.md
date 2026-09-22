@@ -12,6 +12,6 @@
 
 ## 预备作业成果
 
-- [可复现编译器流水线实验](preflight/README.md)：SysY、手写 LLVM IR、RV64GC 汇编、QEMU 差分验证与 MLIR 静态探索。
-- [LNCS 论文工程](report/README.md)：Springer `llncs` 2.26 中文报告及 XeLaTeX 构建方法。
-- [外部研究与版本核查](docs/research/preflight-research.md)：LLVM、RISC-V psABI、MLIR 与 AscendNPU IR 的证据分层笔记。
+- [可复现编译器流水线实验](preflight/README.md)：以截断点积贯穿 C/Clang 各阶段、手写 LLVM IR、手写 RV64GC、ELF/链接及 QEMU 验证。
+- [《深入理解编译系统》LLNCS 论文工程](report/README.md)：Springer `llncs` 中文综述及 XeLaTeX 构建方法。
+- [调研与设计知识](docs/README.md)：需求映射、实验架构、验证计划与外部资料核查记录。

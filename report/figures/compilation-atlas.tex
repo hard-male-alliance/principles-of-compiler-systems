@@ -1,0 +1,50 @@
+% Compilation atlas / 编译全景图
+\begin{figure}[htbp]
+  \centering
+  \begin{tikzpicture}[x=.98cm,y=1cm]
+    \foreach \x/\name/\title/\made in {
+      0/s/{\shortstack{source\\text}}/{记号与作用域},
+      1.84/t/{\shortstack{typed\\program}}/{类型与名字绑定},
+      3.68/i/{\shortstack{SSA +\\CFG}}/{数据与控制依赖},
+      5.52/a/{\shortstack{target\\program}}/{指令、寄存器、ABI},
+      7.36/o/{\shortstack{relocatable\\object}}/{符号与重定位},
+      9.20/p/{\shortstack{process\\image}}/{虚拟地址与可见效果}}
+    {
+      \node[vis/artifact,minimum width=1.55cm,minimum height=.82cm] (\name) at (\x,1.7) {\title};
+      \node[vis/decision,text width=1.42cm,minimum height=.72cm] (\name d) at (\x,.45) {\made};
+      \draw[vis/edge] (\name) -- (\name d);
+    }
+    \foreach \u/\v in {s/t,t/i,i/a,a/o,o/p}
+      \draw[vis/edge] (\u) -- (\v);
+
+    \draw[vis/semantic,line width=2.2pt] (-.73,-.45) -- (9.93,-.45);
+    \node[vis/label,fill=white,inner sep=2pt,text=semblue] at (4.60,-.45)
+      {$D(n)$：同一源程序义务};
+
+    \draw[decorate,decoration={brace,amplitude=4pt,mirror},black!65]
+      (-.73,-.92) -- (4.42,-.92)
+      node[midway,below=5pt,vis/label]{语言语义与 IR 语义};
+    \draw[decorate,decoration={brace,amplitude=4pt,mirror},black!65]
+      (4.73,-.92) -- (6.31,-.92)
+      node[midway,below=5pt,vis/label]{ISA + ABI};
+    \draw[decorate,decoration={brace,amplitude=4pt,mirror},black!65]
+      (6.62,-.92) -- (9.93,-.92)
+      node[midway,below=5pt,vis/label]{ELF + OS 契约};
+
+    \node[vis/deferred node,anchor=east] (c) at (-.10,2.7) {C 观察载体};
+    \draw[vis/deferred edge] (c) -- (t.north west);
+    \node[vis/deferred node,anchor=west] (ll) at (3.95,2.7) {手写 \texttt{.ll}};
+    \draw[vis/deferred edge] (ll) -- (i.north);
+    \node[vis/deferred node,anchor=west] (ss) at (6.65,2.7) {手写 \texttt{.S}};
+    \draw[vis/deferred edge] (ss) -- (a.north);
+
+    \node[vis/deferred node] (dr) at (4.55,-1.85) {寄存器待定};
+    \node[vis/deferred node] (ds) at (6.85,-1.85) {符号地址待定};
+    \node[vis/deferred node] (dl) at (9.05,-1.85) {装载地址待定};
+    \draw[vis/deferred edge] (dr) -- (4.60,-1.12);
+    \draw[vis/deferred edge] (ds) -- (6.85,-1.12);
+    \draw[vis/deferred edge] (dl) -- (9.05,-1.12);
+  \end{tikzpicture}
+  \caption{同一个计算在六种表示中拥有不同的显式结构。蓝色粗线表示必须保持的语义关系；橙色浅底标签表示本层新增的决定；紫色虚线表示仍被有意延期的决定。方框是表示边界，而不等同于操作系统进程。}
+  \label{fig:compilation-atlas}
+\end{figure}

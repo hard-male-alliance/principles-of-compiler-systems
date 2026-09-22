@@ -1,11 +1,7 @@
-# 中文：强制使用 XeLaTeX，以便稳定排印 UTF-8 中文。
-# English: Use XeLaTeX explicitly for UTF-8 Chinese typesetting.
+# XeLaTeX build policy / XeLaTeX 构建策略
 $pdf_mode = 5;
 $xelatex = 'xelatex -interaction=nonstopmode -halt-on-error -file-line-error %O %S';
-$bibtex_use = 2;
+$bibtex = 'bibtex %O %B';
 $out_dir = 'build';
 $aux_dir = 'build';
-
-# 中文：清理命令只移除构建目录中的派生文件。
-# English: Cleanup removes derived files from the build directory only.
-$clean_ext = 'bbl blg run.xml synctex.gz';
+$max_repeat = 6;

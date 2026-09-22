@@ -1,0 +1,36 @@
+// SysY 2022 参考实现：与 C、LLVM IR 和 RV64GC 汇编共享同一可观察契约。
+// SysY 2022 reference: shares one observable contract with C, LLVM IR, and RV64GC assembly.
+
+int clipped_dot(int a[], int b[], int n, int lo, int hi) {
+  int acc = 0;
+  int i = 0;
+  while (i < n) {
+    int term = a[i] * b[i];
+    if (term < lo) {
+      term = lo;
+    } else {
+      if (term > hi) {
+        term = hi;
+      }
+    }
+    acc = acc + term;
+    i = i + 1;
+  }
+  return acc;
+}
+
+int main() {
+  int a[8] = {-4, 1, 7, 3, 9, -2, 6, 5};
+  int b[8] = {2, -3, 1, 4, -1, 5, 2, 3};
+  int n = getint();
+  if (n < 0) {
+    n = 0;
+  } else {
+    if (n > 8) {
+      n = 8;
+    }
+  }
+  putint(clipped_dot(a, b, n, -8, 12));
+  putch(10);
+  return 0;
+}

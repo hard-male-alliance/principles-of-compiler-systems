@@ -1,0 +1,89 @@
+\section{LLVM IR：把循环拆成控制、值与内存}
+\label{sec:llvm-ir}
+
+前端已经知道 \texttt{a[i]} 是一个整数表达式，却仍未回答三个问题：什么时候执行这次访问？本轮的 \texttt{i} 与 \texttt{acc} 来自哪里？数组下标怎样成为地址？LLVM 中间表示（LLVM Intermediate Representation, LLVM IR）的作用正是把这些隐含在结构化语句里的关系分开表达。它既不是源语言的简写，也不是某一种机器的汇编，而是一层有类型、显式控制流且便于改写的语义接口\cite{llvm-lattner2004,llvm-langref}。
+
+本节继续追踪 \texttt{clipped\_dot}：循环头决定是否处理第 \(i\) 项，循环体读取 \(a_i,b_i\)，计算并截断乘积，再把结果并入 \texttt{acc}。同一个小循环将依次显露为一张控制流图、两条跨迭代的值递推和两次带类型步长的地址计算。
+
+\subsection{基本块组成控制流图}
+
+函数首先被划分为基本块（basic block）：除入口外只能从块首进入，块内顺序执行，并由 \texttt{br}、\texttt{ret} 等终结指令决定下一步。令
+\[
+  G=(V,E),\qquad
+  V=\{\textit{entry},\textit{loop},\textit{body},\textit{exit}\}.
+\]
+其中边 \((u,v)\in E\) 表示块 \(u\) 的终结指令可能把控制交给 \(v\)。案例有入口边 \(entry\to loop\)、真假分支 \(loop\to body/exit\) 和回边 \(body\to loop\)。源语言的 \texttt{while} 因而不再是一个特殊构造，而是图上的一个环。
+
+图~\ref{fig:ssa-cfg} 把这张图与循环携带值放在一起。它比源代码多暴露了分支边，却有意忘掉“while 语句”这种表面结构；这种取舍使同一套图算法可以处理由 \texttt{while}、\texttt{for}、短路表达式乃至 \texttt{goto} 形成的控制流。
+
+\input{figures/ssa-cfg}
+
+图结构还给出了“某个定义能否到达某次使用”的精确语言。若从入口到结点 \(v\) 的每一条路径都经过 \(d\)，称 \(d\) \emph{支配}（dominate）\(v\)：
+\begin{equation}
+  d\mathrel{\operatorname{dom}} v
+  \quad\Longleftrightarrow\quad
+  \forall\pi:\ entry\leadsto v,\ d\in\pi .
+  \label{eq:dominance}
+\end{equation}
+例如 \textit{loop} 支配 \textit{body} 和 \textit{exit}，\textit{body} 却不支配 \textit{loop}，因为第一次迭代从 \textit{entry} 直接进入循环头。LLVM 要求普通 SSA 定义支配其使用；支配关系由此把“先定义后使用”从文本顺序推广到了任意 CFG。
+
+工程上当然可以保留结构化语法树并在其上优化，但大量语言的控制结构会迫使每个分析分别处理许多语法特例。CFG 牺牲一部分源级意图，换来统一的可达性、循环和支配算法。调试信息与后续的循环元数据，正是在这种扁平化之后补回高层来源和意图的工程机制。
+
+\subsection{SSA 与 \texttt{phi}：在边上选择值}
+
+静态单赋值（Static Single Assignment, SSA）要求每个 SSA 名字恰好由一处定义。案例的循环头为
+\begin{lstlisting}[language=LLVMIR,basicstyle=\ttfamily\scriptsize]
+loop:
+  %i   = phi i32 [ 0, %entry ], [ %i.next, %body ]
+  %acc = phi i32 [ 0, %entry ], [ %acc.next, %body ]
+  %more = icmp slt i32 %i, %n
+  br i1 %more, label %body, label %exit
+\end{lstlisting}
+这里 \texttt{phi} 不是按文本顺序执行的普通赋值。若控制沿边 \(p\to loop\) 到达，则所有 \texttt{phi} 同时选择标有前驱 \(p\) 的来值：
+\[
+ (i,acc)_{loop}=
+ \begin{cases}
+   (0,0), & p=entry,\\
+   (i_{next},acc_{next}), & p=body.
+ \end{cases}
+\]
+第一次进入循环时取初值；走回边时取上一轮产生的新值。\texttt{phi} 的使用概念上位于对应前驱边上，因此 \texttt{\%i.next} 无须支配循环头，只须在 \textit{body}\(\to\)\textit{loop} 这条边上可用。这一边语义也避免了把两个 \texttt{phi} 错解成有先后次序的交换赋值。
+
+SSA 的收益不只是“变量不再改名”。一个值只有唯一来源，常量传播、公共子表达式消除和许多稀疏数据流分析便可直接沿 def--use 链工作；在汇合点需要 \texttt{phi} 的位置则可由支配边界系统构造\cite{llvm-cytron1991}。然而 SSA 只约束值名，并没有消除可变内存：
+\begin{lstlisting}[language=LLVMIR,basicstyle=\ttfamily\scriptsize]
+%slot = alloca i32, align 4
+store i32 %x, ptr %slot, align 4
+%y = load i32, ptr %slot, align 4
+\end{lstlisting}
+\texttt{\%y} 只定义一次，但 \texttt{\%slot} 指向的对象可以被反复写入。对地址未逸出、访问形状简单的局部对象，内存提升（memory promotion）可以把 load/store 改成 SSA 值，并在必要的汇合点插入 \texttt{phi}\cite{llvm-passdocs}；数组、别名指针、\texttt{volatile} 访问和未知调用则需要另外的内存效应模型。理论上更纯粹的“所有内存皆 SSA”会把每次存储都变成显式状态版本，实际系统通常以 MemorySSA、别名分析和效应属性分工，以控制表示规模与编译时间。
+
+\subsection{GEP：类型化地址计算，而不是访存}
+
+循环体把数组访问拆成索引扩展、地址计算和读取：
+\begin{lstlisting}[language=LLVMIR,basicstyle=\ttfamily\scriptsize]
+%index = sext i32 %i to i64
+%a.element = getelementptr inbounds i32, ptr %a, i64 %index
+%a.value = load i32, ptr %a.element, align 4
+\end{lstlisting}
+在本例默认地址空间中，忽略实现规定的指针位宽细节后，这条 \texttt{getelementptr}（GEP）的核心地址关系为
+\begin{equation}
+  \operatorname{addr}(a[i])
+  =\operatorname{base}(a)
+   +\operatorname{sext}_{64}(i)\cdot\operatorname{allocsize}(\mathtt{i32})
+  =\operatorname{base}(a)+4i .
+  \label{eq:gep-address}
+\end{equation}
+这正是前端类型判断留下的最后一项高层信息：\texttt{i32} 决定步长；GEP 本身不读取内存，随后的 \texttt{load i32} 才产生读效应。现代 LLVM 的不透明指针（opaque pointer）不在 \texttt{ptr} 上重复保存所指类型，访问类型由 GEP、load 和 store 明示\cite{llvm-opaque-pointers,llvm-gep}。
+
+\texttt{inbounds} 不是边界检查。它承诺地址计算保持在同一已分配对象允许的范围内；承诺被违反时结果可成为 poison。案例的 \texttt{main} 将 \(n\) 夹到 \([0,8]\)，循环体只在 \(0\le i<n\) 时执行，两个实参数组恰有 8 项，所以当前调用满足承诺。但是 \texttt{clipped\_dot} 的独立函数签名没有编码“至少 8 项”这一长度关系：若希望对任意调用者保持该性质，就需要更强的接口、调用点内联事实，或放弃 \texttt{inbounds}。更强的 IR 承诺扩大优化空间，也同步扩大了前端必须正确证明的义务。
+
+\subsection{属性、内存与 poison 的边界}
+
+函数参数写作 \texttt{ptr readonly \%a}，只说明该函数不经这个参数写入可达内存；它不自动意味着非空、足够长、互不别名或不会逸出。类似地，数据布局（data layout）决定指针宽度、标量对齐和聚合体步长，目标三元组（target triple）选择目标环境。模块仍可跨多个后端复用，但并非脱离目标约束的纯数学项\cite{llvm-datalayout}。
+
+这些契约之所以重要，可由一个局部变换看出。普通 \texttt{add i32} 定义模 \(2^{32}\) 的位向量加法；\texttt{add nsw} 则额外承诺有符号加法不环绕，违反时产生 poison。poison 通常沿数据流传播，一旦被用于分支条件或地址等敏感位置即可导致未定义行为；\texttt{freeze} 能把 poison/\texttt{undef} 固定为一次任意但一致的普通值\cite{llvm-langref}。因此 \texttt{nsw} 不是免费的优化提示，也不是动态检查，而是允许优化器排除溢出执行的语义前提。
+
+在固定案例中，每项截断后落于 \([-8,12]\)，八项和落于 \([-64,96]\)，所以累加不会溢出；但截断前的乘法若面对任意 \texttt{i32} 数组，仍可能溢出。手写 IR 对乘法使用普通 \texttt{mul}，而从 C 生成的 IR 可依据“有符号溢出为未定义行为”添加 \texttt{nsw}。两者在当前数据上得到同一结果，却为一般调用定义了不同的程序。这不是需要反复附加的免责声明，而是下一节判断优化是否合法时必须区分的语义事实。
+
+\paragraph{本层原则。}
+LLVM IR 的力量来自分离：CFG 表达何时执行，SSA 表达值从何处来，GEP 表达地址如何形成，内存效应与属性表达哪些重排仍被允许。分离让分析能够各自处理一种关系，也意味着优化器必须重新组合控制、数值与内存事实；下一节的核心问题因此不是“能否写出另一段 IR”，而是“哪一种改写既合法又值得”。
