@@ -1,0 +1,68 @@
+% !TeX program = xelatex
+% 中文：本稿使用 Springer LNCS 官方文档类；请勿通过 geometry 等宏包覆盖版式。
+% English: This manuscript uses Springer's official LNCS class; do not override its layout.
+\documentclass[runningheads]{llncs}
+
+\usepackage[UTF8,scheme=plain,fontset=fandol]{ctex}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{url}
+\usepackage[hidelinks]{hyperref}
+
+\graphicspath{{figures/}{generated/}}
+\input{generated/experiment-values.tex}
+
+\lstdefinestyle{code}{
+  basicstyle=\ttfamily\small,
+  columns=fullflexible,
+  frame=single,
+  numbers=left,
+  numberstyle=\scriptsize\color{gray},
+  breaklines=true,
+  showstringspaces=false,
+  keepspaces=true
+}
+\lstset{style=code}
+
+\title{从 SysY 源程序到可执行文件：LLVM IR、RISC-V 汇编与 MLIR 渐进式降低的可复现实证研究}
+\titlerunning{从 SysY 到 LLVM IR、RISC-V 与 MLIR}
+
+% 中文：提交前替换作者、学号、班级和邮箱；分工必须与真实贡献一致。
+% English: Replace identity placeholders and report actual contributions before submission.
+\author{成员甲（学号：待填写）\inst{1} \and 成员乙（学号：待填写）\inst{1}}
+\authorrunning{成员甲与成员乙}
+\institute{学院、班级与学校待填写\\
+\email{member-a@example.edu, member-b@example.edu}}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+本文以一个覆盖算术、赋值、条件分支、循环、函数调用与数组访问的 SysY 程序为共同研究对象，设计从预处理、编译、汇编到链接的端到端观察实验，并分别以 LLVM 中间表示（LLVM Intermediate Representation, LLVM IR）和 RISC-V 汇编重写其语义。研究采用“同一输入、同一可观察输出、逐层保存制品”的验证原则，将程序退出状态与标准输出作为端到端判据，同时通过控制流图和关键指令序列解释源级结构如何降低。进阶部分以多级中间表示（Multi-Level Intermediate Representation, MLIR）的方言转换和渐进式降低（progressive lowering）为分析主线，规划对 VecAdd 示例的逐层观察。当前稿为可复现实验协议与论文骨架；凡依赖实际运行的数据均明确标为待测，不以预期值替代观测值。
+
+\keywords{编译流水线 \and LLVM IR \and RISC-V \and MLIR \and 渐进式降低 \and 可复现性}
+\end{abstract}
+
+\section*{作者分工}
+成员甲：\textbf{待据实填写}（建议描述实验设计、LLVM IR 实现与结果复核）；成员乙：\textbf{待据实填写}（建议描述 RISC-V 实现、MLIR 探索与论文整理）。共同工作：研究问题确认、交叉验证和最终审阅。此处仅为分工模板，不构成贡献事实。
+
+\input{sections/01-introduction}
+\input{sections/02-method}
+\input{sections/03-results}
+\input{sections/04-mlir}
+\input{sections/05-threats}
+\input{sections/06-conclusion}
+
+\bibliographystyle{splncs04}
+\bibliography{references}
+
+\appendix
+% 中文：为附录建立独立的 PDF 锚点命名空间，避免与正文节号冲突。
+% English: Give appendix sections a distinct PDF anchor namespace.
+\renewcommand{\theHsection}{appendix.\Alph{section}}
+\input{sections/a-reproducibility}
+
+\end{document}

@@ -1,0 +1,14 @@
+\section{可复现实验清单}
+\label{app:reproducibility}
+
+提交前应由自动化脚本生成或核对以下材料：
+\begin{enumerate}
+  \item \textbf{身份与环境：}操作系统、体系结构、容器或虚拟机信息；编译器、LLVM、链接器、模拟器及 MLIR 工具的完整版本输出。
+  \item \textbf{输入：}SysY、LLVM IR、RISC-V 汇编源文件，运行时库来源与校验和，全部测试夹具及其预期输出来源。
+  \item \textbf{命令：}预处理、IR 生成、优化、汇编、链接、反汇编与执行的可复制命令；不得用省略号替代关键参数。
+  \item \textbf{制品：}预处理文件、未优化/优化 IR、汇编、目标文件、符号表、重定位表、链接映射、控制流图和逐次运行日志。
+  \item \textbf{判定：}差分脚本版本、输出规范化规则、失败样本保存策略和汇总文件的生成方式。
+  \item \textbf{MLIR：}VecAdd 来源版本、环境安装步骤、逐阶段通道命令、各阶段 IR 与失败诊断；设备不可用时明确可复现边界。
+\end{enumerate}
+
+推荐从仓库根目录使用版本化脚本完成实验，并将临时文件放入项目内的 \texttt{.temp/}、缓存放入 \texttt{.cache/}。论文构建本身见 \texttt{report/README.md}。最终 PDF 应由干净检出（clean checkout）生成，以避免本地未跟踪字体、宏包或制品造成隐式依赖。

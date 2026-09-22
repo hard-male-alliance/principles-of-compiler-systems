@@ -1,0 +1,23 @@
+\section{结果与证据组织}
+\label{sec:results}
+
+本节当前只定义报告模式，不报告尚未发生的实验。工具链版本为 \ToolchainVersion，目标三元组为 \TargetTriple；两项均须由原始命令输出注入。表~\ref{tab:result-status}中的“待实测”不是失败或成功，而是尚无可审计证据。
+
+\begin{table}
+\caption{端到端验证状态（由实验制品生成，不手工推断）}
+\label{tab:result-status}
+\centering
+\begin{tabular}{lcl}
+\toprule
+实现路径 & 通过数/夹具数 & 证据位置 \\
+\midrule
+SysY/参考路径 & \SourcePassCount/\FixtureCount & \texttt{artifacts/runs/source/} \\
+LLVM IR 路径 & \IRPassCount/\FixtureCount & \texttt{artifacts/runs/ir/} \\
+RISC-V 汇编路径 & \AssemblyPassCount/\FixtureCount & \texttt{artifacts/runs/asm/} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+完成实验后，正文应围绕证据而不是按命令流水账展开：首先给出三路径差分测试的通过情况和任何反例；其次以一幅控制流图解释循环头、循环体、退出块与 \texttt{phi} 节点或显式状态更新的对应；再次选择一个函数调用，追踪 LLVM IR 参数到 RISC-V 参数寄存器、栈帧与返回值的映射；最后说明运行时符号如何在链接阶段被解析。若某条路径失败，应保留失败输入和原始输出，并将原因标为已确认或待定位，而不是删除异常样本。
+
+优化对照表应从机器可读摘要生成，至少包含基本块数、静态指令数和可重复的运行统计。只有在计时噪声、样本量和运行环境得到记录后，才可使用“提升”或“回退”等因果色彩较强的措辞。
