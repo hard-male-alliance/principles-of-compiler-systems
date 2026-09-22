@@ -1,0 +1,188 @@
+% Candidate bibliography for the survey-style paper "Understanding Compiler Systems".
+% The entries favor standards, official upstream documentation, and peer-reviewed
+% primary literature.  Web references use @misc/howpublished for compatibility
+% with Springer's classic splncs04 BibTeX style.
+
+@misc{wg14-n3220,
+  author       = {{ISO/IEC JTC 1/SC 22/WG 14}},
+  title        = {{ISO/IEC 9899:2024 (en): Programming Languages---C, Working Draft N3220}},
+  year         = {2024},
+  howpublished = {WG14 working draft, \url{https://www.open-std.org/jtc1/sc22/wg14/www/docs/n3220.pdf}},
+  note         = {Accessed 2026-09-22}
+}
+
+@misc{clang-command-2026,
+  author       = {{LLVM Project}},
+  title        = {{clang---the Clang C, C++, and Objective-C Compiler}},
+  year         = {2026},
+  howpublished = {Clang command guide, \url{https://clang.llvm.org/docs/CommandGuide/clang.html}},
+  note         = {Accessed 2026-09-22}
+}
+
+@misc{clang-toolchain-2026,
+  author       = {{LLVM Project}},
+  title        = {Assembling a Complete Toolchain},
+  year         = {2026},
+  howpublished = {Clang documentation, \url{https://clang.llvm.org/docs/Toolchain.html}},
+  note         = {Accessed 2026-09-22}
+}
+
+@misc{clang-ast-2026,
+  author       = {{LLVM Project}},
+  title        = {Introduction to the {Clang} {AST}},
+  year         = {2026},
+  howpublished = {Clang documentation, \url{https://clang.llvm.org/docs/IntroductionToTheClangAST.html}},
+  note         = {Accessed 2026-09-22}
+}
+
+@misc{llvm-langref-2026,
+  author       = {{LLVM Project}},
+  title        = {{LLVM Language Reference Manual}},
+  year         = {2026},
+  howpublished = {LLVM documentation, \url{https://llvm.org/docs/LangRef.html}},
+  note         = {Accessed 2026-09-22}
+}
+
+@misc{llvm-passes-2026,
+  author       = {{LLVM Project}},
+  title        = {{LLVM's Analysis and Transform Passes}},
+  year         = {2026},
+  howpublished = {LLVM documentation, \url{https://llvm.org/docs/Passes.html}},
+  note         = {Accessed 2026-09-22}
+}
+
+@misc{llvm-opt-2026,
+  author       = {{LLVM Project}},
+  title        = {{opt---LLVM Optimizer}},
+  year         = {2026},
+  howpublished = {LLVM command guide, \url{https://llvm.org/docs/CommandGuide/opt.html}},
+  note         = {Accessed 2026-09-22}
+}
+
+@misc{llvm-newpm-2026,
+  author       = {{LLVM Project}},
+  title        = {Using the New Pass Manager},
+  year         = {2026},
+  howpublished = {LLVM documentation, \url{https://llvm.org/docs/NewPassManager.html}},
+  note         = {Accessed 2026-09-22}
+}
+
+@misc{llvm-codegen-2026,
+  author       = {{LLVM Project}},
+  title        = {The {LLVM} Target-Independent Code Generator},
+  year         = {2026},
+  howpublished = {LLVM documentation, \url{https://llvm.org/docs/CodeGenerator.html}},
+  note         = {Accessed 2026-09-22}
+}
+
+@misc{llvm-globalisel-2026,
+  author       = {{LLVM Project}},
+  title        = {Global Instruction Selection},
+  year         = {2026},
+  howpublished = {LLVM documentation, \url{https://llvm.org/docs/GlobalISel/index.html}},
+  note         = {Accessed 2026-09-22}
+}
+
+@inproceedings{lattner-adve-llvm-2004,
+  author    = {Chris Lattner and Vikram Adve},
+  title     = {{LLVM}: A Compilation Framework for Lifelong Program Analysis and Transformation},
+  booktitle = {Proceedings of the International Symposium on Code Generation and Optimization},
+  year      = {2004},
+  pages     = {75--86},
+  publisher = {IEEE Computer Society},
+  doi       = {10.1109/CGO.2004.1281665},
+  url       = {https://llvm.org/pubs/2004-01-30-CGO-LLVM.pdf}
+}
+
+@article{cytron-et-al-ssa-1991,
+  author  = {Ron Cytron and Jeanne Ferrante and Barry K. Rosen and Mark N. Wegman and F. Kenneth Zadeck},
+  title   = {Efficiently Computing Static Single Assignment Form and the Control Dependence Graph},
+  journal = {ACM Transactions on Programming Languages and Systems},
+  year    = {1991},
+  volume  = {13},
+  number  = {4},
+  pages   = {451--490},
+  doi     = {10.1145/115372.115320}
+}
+
+@misc{riscv-isa-2026,
+  author       = {{RISC-V International}},
+  title        = {The {RISC-V} Instruction Set Manual, Volume I: Unprivileged Architecture},
+  year         = {2026},
+  howpublished = {Ratified Specifications Library, \url{https://docs.riscv.org/reference/isa/_attachments/riscv-unprivileged.pdf}},
+  note         = {Accessed 2026-09-22; includes RV64I and the M extension}
+}
+
+@misc{riscv-psabi-1.0,
+  author       = {Kito Cheng and Jessica Clarke},
+  title        = {{RISC-V ABIs Specification, Version 1.0}},
+  year         = {2025},
+  howpublished = {RISC-V International ratified specification, \url{https://docs.riscv.org/reference/abi/v1.0/index.html}},
+  note         = {Accessed 2026-09-22}
+}
+
+@misc{elf-gabi-2025,
+  author       = {{Xinuos, Inc.}},
+  title        = {{ELF Object File Format, Version 4.3 Draft}},
+  year         = {2025},
+  howpublished = {Generic System V ABI specification, \url{https://gabi.xinuos.com/elf/}},
+  note         = {Accessed 2026-09-22}
+}
+
+@misc{linux-elf-2026,
+  author       = {Michael Kerrisk and {Linux man-pages contributors}},
+  title        = {{elf(5)---Executable and Linking Format}},
+  year         = {2026},
+  howpublished = {Linux man-pages 6.19, \url{https://man7.org/linux/man-pages/man5/elf.5.html}},
+  note         = {Accessed 2026-09-22}
+}
+
+@misc{linux-execve-2026,
+  author       = {Michael Kerrisk and {Linux man-pages contributors}},
+  title        = {{execve(2)---Execute Program}},
+  year         = {2026},
+  howpublished = {Linux man-pages, \url{https://man7.org/linux/man-pages/man2/execve.2.html}},
+  note         = {Accessed 2026-09-22}
+}
+
+@misc{lld-design-2026,
+  author       = {{LLVM Project}},
+  title        = {The {ELF}, {COFF} and {Wasm} Linkers},
+  year         = {2026},
+  howpublished = {LLD documentation, \url{https://lld.llvm.org/NewLLD.html}},
+  note         = {Accessed 2026-09-22}
+}
+
+@inproceedings{lattner-et-al-mlir-2021,
+  author    = {Chris Lattner and Mehdi Amini and Uday Bondhugula and Albert Cohen and Andy Davis and Jacques Pienaar and River Riddle and Tatiana Shpeisman and Nicolas Vasilache and Oleksandr Zinenko},
+  title     = {{MLIR}: Scaling Compiler Infrastructure for Domain Specific Computation},
+  booktitle = {Proceedings of the 19th IEEE/ACM International Symposium on Code Generation and Optimization},
+  year      = {2021},
+  pages     = {2--14},
+  publisher = {IEEE},
+  doi       = {10.1109/CGO51591.2021.9370308}
+}
+
+@misc{mlir-dialect-conversion-2026,
+  author       = {{LLVM Project}},
+  title        = {{MLIR Dialect Conversion}},
+  year         = {2026},
+  howpublished = {MLIR documentation, \url{https://mlir.llvm.org/docs/DialectConversion/}},
+  note         = {Accessed 2026-09-22}
+}
+
+@misc{mlir-llvm-target-2026,
+  author       = {{LLVM Project}},
+  title        = {{LLVM IR Target}},
+  year         = {2026},
+  howpublished = {MLIR documentation, \url{https://mlir.llvm.org/docs/TargetLLVMIR/}},
+  note         = {Accessed 2026-09-22}
+}
+
+@misc{mlir-toy-lowering-2026,
+  author       = {{LLVM Project}},
+  title        = {Partial Lowering to Lower-Level Dialects for Optimization},
+  year         = {2026},
+  howpublished = {MLIR Toy tutorial, Chapter 5, \url{https://mlir.llvm.org/docs/Tutorials/Toy/Ch-5/}},
+  note         = {Accessed 2026-09-22}
+}
