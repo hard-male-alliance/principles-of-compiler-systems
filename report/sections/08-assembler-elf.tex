@@ -1,114 +1,91 @@
-\section{汇编器与 ELF：把未知量保留为显式证据}
+\section{从符号调用到进程映像：汇编、链接与装载}
 \label{sec:assembler-elf}
+\label{sec:linker-loader}
+\label{sec:validation}
 
-汇编器不是把助记符逐字替换成操作码的字典。它解析节与符号，选择包括压缩形式在内的编码，计算局部布局，并把尚不能决定的地址表达为重定位（relocation）。由此得到的可重定位目标文件 \texttt{ET\_REL} 不是“半个可执行文件”，而是一份结构完整、专供链接器继续计算的契约。本节将概念模型与预检流程真实产生的 \texttt{handwritten-asm.rv64.o} 对照；所列数字来自随完整预检保存的 GNU \texttt{readelf}/\texttt{objdump} 报告，不把示意输出冒充实验结果。
+上一节停在一条看似平常的指令：\texttt{clipped\_dot} 的返回值已经位于 \texttt{a0}，接下来执行 \texttt{call putint}。然而汇编器尚不知道 \texttt{putint} 最终位于哪个地址，静态库尚不知道自己是否会被采用，内核也不关心 \texttt{putint} 这个名字。这个调用因而是观察编译系统后半程的理想切片：同一意图依次表现为符号引用、重定位约束、归档需求、虚拟地址，最后才成为一次控制转移。这里的“未知”并非信息遗漏，而是被有意推迟的\emph{符号义务}（symbolic obligation）；每一层只解决自己已有信息足以决定的问题。
 
-\subsection{汇编的两遍模型：有用但不是实现限制}
+\input{figures/object-process}
 
-经典的两遍汇编（two-pass assembly）模型很适合理解数据依赖。第一遍顺序扫描输入，维护位置计数器，为标签建立 \((\text{section},\text{offset})\) 符号值，并记录指示所建立的节；第二遍编码指令和数据，已知的同节距离可被求值，跨节或外部引用则产生重定位。真实汇编器可能合并扫描、迭代决定编码宽度，或采用片段（fragment）数据结构处理松弛；“两遍”是概念上的依赖分层，而非 GNU as 或 LLVM MC 必须恰好读文件两次。
+\subsection{汇编器：把未定地址编码成代数问题}
 
-这个模型解释了前向引用为何不需要源程序先声明。读到 \texttt{bge t1,a2,.Ldone} 时，\texttt{.Ldone} 尚未出现；等布局稳定后，汇编器知道它是同一 \texttt{.text} 中偏移 \texttt{0x38} 的局部符号。预检对象仍保留偏移 \texttt{0x4} 处的 \texttt{R\_RISCV\_BRANCH .Ldone}：这并不说明汇编器“算不出”，而是因为后续链接松弛可能删除前面的字节，重定位让链接器能在最终布局上重新编码分支。RISC-V psABI 明确要求参与松弛的序列携带相应重定位元数据\cite{bin-riscv-psabi-relax}。
+将一个可重定位目标文件抽象为三元组
+\[
+  O=(B,\Sigma,R).
+\]
+其中 \(B\) 是按节组织的字节，\(\Sigma\) 是从符号名到“定义位置、绑定、类型或未定义”的映射，\(R\) 是尚待求值的重定位集合。汇编器能确定局部标签在某个输入节中的偏移，因此可以填入大部分 \(B\)；对于跨对象调用，它并不猜测地址，而是在 \(\Sigma\) 中留下未定义符号，并在 \(R\) 中记录“何处、按哪种规则、相对于哪个符号”完成计算。经典的两遍汇编（two-pass assembly）恰好揭示这一依赖：先建立局部布局，再编码引用；真实实现可以合并扫描、迭代布局或采用片段数据结构，而不改变这种信息顺序。
 
-\begin{figure}[t]
-\centering
-\begin{tabular}{ccl}
-源汇编 & \(\longrightarrow\) & 节片段、符号、待求值表达式\\
- & 第一层提交 & 局部偏移、编码候选、对齐\\
- & \(\downarrow\) & \\
-\texttt{ET\_REL} & = & 已编码字节 + 符号表 + 重定位表\\
-\end{tabular}
-\caption{汇编器的信息提交边界：未知地址不是填零后遗忘，而是以带类型的表达式延期。}
-\label{fig:assembler-commit}
-\end{figure}
-
-\subsection{实物检查：对象头与节表}
-
-\observed 对 \texttt{handwritten-asm.rv64.o} 的文件头检查得到：ELF64、小端、\texttt{EM\_RISCV}、\texttt{ET\_REL}，入口值为 0，无程序头表；标志为 \texttt{0x5}，即 RVC 与 double-float ABI。对象共有 10 个节，\texttt{.text} 大小 198 B、对齐 2 B；\texttt{.rela.text} 大小 432 B，恰为 18 个 \texttt{Elf64\_Rela} 项（每项 24 B）；\texttt{.symtab} 有 20 个 24 B 的符号项。没有程序头不是损坏：普通可重定位对象并不承担建立进程映像的职责。
-
-\begin{table}[t]
-\caption{\texttt{handwritten-asm.rv64.o} 中与论证有关的实测节}
-\label{tab:objsections}
-\centering
-\small
-\begin{tabular}{lrrp{.43\linewidth}}
-\toprule
-节 & 大小/B & 对齐/B & 作用\\
-\midrule
-\texttt{.text} & 198 & 2 & 指令字节；2 字节对齐体现 C 扩展可用\\
-\texttt{.rela.text} & 432 & 8 & 18 个 RELA 重定位，\texttt{sh\_info=1} 指向被修补的 \texttt{.text}\\
-\texttt{.data} / \texttt{.bss} & 0 / 0 & 1 & 案例没有静态存储期数据\\
-\texttt{.note.GNU-stack} & 0 & 1 & 声明工具链栈属性的输入标记\\
-\texttt{.riscv.attributes} & 69 & 1 & 架构扩展与兼容属性\\
-\texttt{.symtab} & 480 & 8 & 20 个局部/全局/未定义符号项\\
-\texttt{.strtab}, \texttt{.shstrtab} & --- & 1 & 符号名和节名字符串\\
-\bottomrule
-\end{tabular}
-\end{table}
-
-ELF 同一容器提供两个互相关联但目的不同的视图。节（section）是链接编辑视图，每个节头记录类型、标志、文件偏移、大小、对齐以及与别的节的关联；段（segment）是加载视图，由程序头描述一批将被共同映射的字节及其 R/W/X 权限\cite{bin-sysv-gabi}。\texttt{ET\_REL} 主要只有节；可执行文件或共享对象才需要用 \texttt{PT\_LOAD} 等段建立进程。一个段可覆盖多个节，节头甚至可从可运行的最终文件中剥离，而必要的程序头不能。因此“操作系统逐个加载 \texttt{.text}、\texttt{.data} 节”是方便但错误的缩写。
-
-常见节也不能仅凭名字猜行为。\texttt{.bss} 通常是 \texttt{SHT\_NOBITS}：其内存大小可以非零，却没有对应文件字节；\texttt{.symtab}/\texttt{.strtab} 服务静态链接与调试，常在剥离后消失；\texttt{.dynsym}/\texttt{.dynstr} 才保存运行时动态解析所需的较小集合；\texttt{.debug\_*} 通常不带 \texttt{SHF\_ALLOC}，不会成为运行映像。节名是约定，真正的机器可读语义来自 \texttt{sh\_type}、\texttt{sh\_flags} 与链接字段。
-
-\subsection{符号表：名字、定义位置和可见性是不同维度}
-
-每个 \texttt{Elf64\_Sym} 含名字索引、值、大小、绑定、类型、可见性和定义节索引\cite{bin-sysv-gabi}。\texttt{STB\_LOCAL} 只在本对象内参与解析；\texttt{STB\_GLOBAL} 可跨对象匹配；\texttt{STB\_WEAK} 可被同名强定义覆盖，未解析弱引用通常取零。类型 \texttt{STT\_FUNC}/\texttt{STT\_OBJECT} 与绑定是正交维度，“全局函数”是二者的组合而非一种单独类别。\texttt{SHN\_UNDEF} 表示本对象提出需求，并不等价于编译错误。
-
-\observed 案例对象中，\texttt{clipped\_dot} 是 \texttt{GLOBAL FUNC}，值 \texttt{0x0}、大小 60 B；\texttt{main} 同为 \texttt{GLOBAL FUNC}，值 \texttt{0x3c}、大小 138 B。\texttt{.Lloop}、\texttt{.Ldone} 等标签是定义在 \texttt{.text} 的局部符号。\texttt{getint}、\texttt{putint}、\texttt{putch} 则为全局 \texttt{SHN\_UNDEF}：对象说明“我需要这三个名字”，静态库稍后提供定义。反过来，\texttt{clipped\_dot} 即使在同一对象内已有定义，调用处仍可带重定位，以允许布局与松弛统一由链接器完成。
-
-源文件的 \texttt{.type}/\texttt{.size} 因而并非装饰。如果漏掉它们，机器仍可能执行，但工具无法可靠显示函数边界，链接器与分析器也失去类型信息。类似地，符号值在 \texttt{ET\_REL} 中通常是“定义节内偏移”，不是将来的虚拟地址；把 \texttt{main=0x3c} 解释为进程将在地址 60 运行，就是把链接前后两个坐标系混为一谈。
-
-\subsection{重定位是带类型的延期表达式}
-
-RISC-V ELF64 使用显式加数的 \texttt{RELA}。每项记录应用位置 \(r_{offset}\)、符号和重定位类型，以及加数 \(A\)。概念上，链接器依据类型计算 \(S+A-P\)、\(S+A\) 或 \(B+A\)：\(S\) 是符号地址，\(P\) 是应用位置，\(B\) 是装载基址。但这不是把一个连续整数机械写入洞中。RISC-V 的 B/J/I/U 类立即数散布在指令位域，PC 相对地址还常拆成高 20 位与低 12 位；具体类型规定范围检查、舍入和位域编码\cite{bin-riscv-psabi}。
-
-\observed 对象偏移 \texttt{0x80} 的源语句 \texttt{call getint} 被编码为
+在 RISC-V 中，\texttt{call putint} 是伪指令（pseudoinstruction）。一般距离下，它可展开为
 
 \begin{verbatim}
-00000080: auipc ra, 0
-           R_RISCV_CALL_PLT getint
-           R_RISCV_RELAX
-00000084: jalr  ra
+auipc ra, 0              # R_RISCV_CALL_PLT putint
+jalr  ra, 0(ra)          # 与上一条共同形成 PC 相对调用
 \end{verbatim}
 
-\texttt{CALL\_PLT} 表达一个可经 PLT 或直接定义完成的 PC 相对调用；伴随的 \texttt{RELAX} 授权链接器在保持语义时改写序列。\texttt{putint} 和 \texttt{putch} 的调用在 \texttt{0xac}/\texttt{0xb6} 呈现相同结构。局部循环回边则因已选用压缩跳转而具有 \texttt{R\_RISCV\_RVC\_JUMP}。因此对象中“立即数暂为零”不是缺失信息：完整答案是“指令占位字节 + 重定位类型 + 符号 + 加数”。只看 \texttt{objdump -d} 会漏掉后半份答案，应在对象阶段使用 \texttt{objdump -dr}。
+零立即数不是错误地址；指令字节与 \texttt{R\_RISCV\_CALL\_PLT} 合在一起才是完整表达。若 \(S\) 是 \texttt{putint} 的最终地址，\(A\) 是显式加数，\(P\) 是应用重定位的位置，则链接器最终求值
+\begin{equation}
+  \Delta=S+A-P. \label{eq:pc-relocation}
+\end{equation}
+RISC-V 再把 \(\Delta\) 分配给高、低立即数字段。忽略具体编码位的排列，可写成
+\[
+  h=\left\lfloor\frac{\Delta+2^{11}}{2^{12}}\right\rfloor,
+  \qquad \ell=\Delta-2^{12}h,
+\]
+使 \(\ell\in[-2^{11},2^{11}-1]\) 能由有符号 12 位立即数表示。加上 \(2^{11}\) 的舍入不是技巧，而是低 12 位可能为负所要求的补偿；这也说明重定位不能简化成“把地址填进一个洞”。具体类型还规定取值范围、指令位域以及溢出时应当报错的条件\cite{bin-riscv-psabi}。
 
-RISC-V 的配对重定位尤其要求这种语义化表示。对于地址形成，\texttt{AUIPC} 所在的高位重定位与随后低位重定位共同表达 PC 相对地址；低位部分必须关联正确的高位位置。链接器还可能删除对齐 NOP 或把两条调用缩成一条。由此可见，重定位不是“把地址填进去”的无类型补丁，而是链接器可验证、可优化的代数承诺。
+这种延期同时给优化留下空间。若最终的 \(\Delta\) 落入 \texttt{jal} 的范围，且对象以 \texttt{R\_RISCV\_RELAX} 授权，链接器可把 \texttt{auipc+jalr} 收缩为一条跳转；若距离较远，就保留一般形式\cite{bin-riscv-psabi-relax}。工程权衡很清楚：汇编器采用稍长但位置无关的保守编码，避免过早绑定；链接器掌握全局布局后再消除不必要的通用性。若手工写死偏移，代码既不能随布局移动，也失去松弛机会。
 
-\subsection{静态归档：按需搜索的对象集合}
+\subsection{ELF 对象：链接视图与装载视图不是一回事}
 
-静态库 \texttt{.a} 是 ar 归档（archive），本质是若干成员文件与可选符号索引，不是预先合并好的单一 ELF。\texttt{ar t} 显示课程所给 \texttt{libsysy\_riscv.a} 只有成员 \texttt{sylib.o}；预检从 \texttt{lib/sylib.c} 为当前 Linux 交叉工具链重建的 \texttt{libsysy-glibc-rv64.a} 同样只有 \texttt{sylib.glibc.rv64.o}。\texttt{nm -s} 可查看索引，链接器借此直接找到定义所需符号的成员\cite{bin-gnu-ar}。
+可重定位 ELF（Executable and Linkable Format）对象 \texttt{ET\_REL} 主要呈现\emph{节}（section）：\texttt{.text} 保存待布置的指令字节，\texttt{.symtab}/\texttt{.strtab} 保存符号及名字，\texttt{.rela.text} 保存带显式加数的重定位。符号值此时通常只是定义节内偏移；\texttt{putint} 的 \texttt{SHN\_UNDEF} 则表示“由链接环境提供定义”。因此，可重定位对象不是残缺的可执行文件，而是一份边界清晰的链接语言：它提交已经确定的局部事实，同时把式~\eqref{eq:pc-relocation} 留给拥有全局地址的人求值\cite{bin-sysv-gabi}。
 
-归档提取是需求驱动的。可用下面的简化状态机理解 GNU 链接器的传统扫描规则\cite{bin-gnu-ld}：
+ELF 的另一个视图是\emph{段}（segment），由程序头描述内核应映射的文件区间、虚拟地址和 R/W/X 权限。节回答“这些字节在链接时扮演什么角色”，段回答“这些页在运行时如何进入地址空间”。一个 \texttt{PT\_LOAD} 可以覆盖多个节；调试节和完整静态符号表可以留在文件中却不被映射，反之，一个没有程序头的普通 \texttt{ET\_REL} 对象仍然完全合法。把“加载 ELF”说成“依次加载 \texttt{.text}、\texttt{.data}、\texttt{.bss}”虽便于入门，却混淆了两套索引。尤其是 \texttt{.bss}：链接视图通常以 \texttt{SHT\_NOBITS} 表示它不占文件字节；装载视图则由 \(p_{memsz}>p_{filesz}\) 的可写段表达尾部零填充。
 
-\begin{verbatim}
-D := 已选择的全局定义；U := 尚未满足的强引用
-从左到右扫描命令行：
-  普通 .o：整体加入，更新 D 与 U
-  归档 .a：反复抽取能满足当前 U 的成员，直到不再变化
-结束：报告 U 中仍未定义的强符号及冲突强定义
-\end{verbatim}
+\subsection{链接器：求符号环境的不动点}
 
-所以 \texttt{handwritten-asm.rv64.o} 应出现在运行时库之前：它先把 \texttt{getint}、\texttt{putint}、\texttt{putch} 放入 \(U\)，归档随后才有理由抽取 \texttt{sylib.glibc.rv64.o}。相反次序可能失败，因为扫描归档时尚无需求，链接器通常不会因后出现对象而自动回头。循环依赖可用 \texttt{--start-group}/\texttt{--end-group} 反复搜索，但有额外成本；\texttt{--whole-archive} 强制纳入全部成员，会增加代码与副作用，并非修复普通顺序错误的首选。
+链接器首先为名字选择定义。令 \(D(X)\) 是已选择对象集合 \(X\) 提供的全局定义，\(U(X)\) 是其中尚未满足的强引用。普通对象总被纳入；静态归档（archive）则是带符号索引的对象集合，只在某成员能满足当前需求时才抽取。其核心过程可写成最小不动点：
+\begin{align*}
+  X_0 &= \{\text{命令行中显式对象}\},\\
+  X_{k+1} &= X_k\cup
+  \{m\mid m\text{ 是当前归档成员且 }D(\{m\})\cap U(X_k)\ne\varnothing\}.
+\end{align*}
+当 \(X_{k+1}=X_k\) 时，本轮归档搜索稳定。于是，手写对象先提出 \texttt{putint} 需求，\texttt{libsysy} 的符号索引再把需求导向定义该函数的成员；若归档出现在提出需求之前，传统的从左到右扫描通常不会自动回头\cite{bin-gnu-ar,bin-gnu-ld}。\texttt{--start-group} 通过反复扫描处理归档间循环依赖，但会增加链接成本；\texttt{--whole-archive} 强制纳入所有成员，又可能放大代码和初始化副作用。正确的对象次序通常比这两种重锤更简单。
 
-\subsection{四种工具回答四类问题}
+符号解析并非“同名即兼容”。课程随附的 RISC-V 归档由 newlib 环境构建，内部还依赖 \texttt{\_impure\_ptr}；本文的 GNU/Linux 交叉环境使用 glibc，因而从同一份 \texttt{sylib.c} 重建运行时。这个插曲只说明一个重要边界：ISA 决定机器指令，处理器 ABI（psABI）决定寄存器与数据布局，系统 C 库及启动环境又形成更外层契约。文件同为 ELF64 RISC-V，仅证明容器和机器类别相容，不能推出内部运行时符号也相容。比伪造缺失符号更可靠的工程选择，是让库实现与最终 sysroot 共享同一构建环境。
 
-表~\ref{tab:binarytools} 把实验命令与证据边界对应。工具输出不能替代解释：例如看到 \texttt{U putint}，正确结论是当前对象把定义延期给链接阶段，而不是“putint 不存在”；看到对象无程序头，也不能结论为“不是 ELF”。
+定义选定后，链接脚本把输入节布置到输出节，地址布局赋予式~\eqref{eq:pc-relocation} 中的 \(S\) 与 \(P\)，链接器继而应用重定位、执行目标相关松弛，并生成程序头\cite{bin-gnu-ld-scripts}。这几步存在反馈：松弛会缩短代码，改变后继地址，布局与重定位因而可能迭代至稳定。抽象地说，链接器寻找一个布局 \(L\)，使每个重定位约束在 \(L\) 下可编码，并使输出段满足对齐和权限合同。这个视角比背诵固定步骤更准确：成熟链接器可以交错扫描、布局和松弛，但不能在知道地址之前正确求出 PC 相对位移。
+
+\subsection{加载器：名字消失之后，地址成为一次执行}
+
+最终静态可执行文件通常是 \texttt{ET\_EXEC}，位置无关可执行文件通常以 \texttt{ET\_DYN} 表示。内核执行 \texttt{execve} 时读取程序头，将每个 \texttt{PT\_LOAD} 的文件区间映射到虚拟地址空间，并对 \(p_{memsz}-p_{filesz}\) 的尾部清零；一个基本一致性条件是
+\[
+  p_{vaddr}\equiv p_{offset}\pmod {p_{align}},
+  \qquad 0\le p_{filesz}\le p_{memsz}.
+\]
+动态程序还通过 \texttt{PT\_INTERP} 把共享对象装载和动态重定位委托给用户态动态链接器\cite{bin-sysv-gabi-dynamic}。到这个阶段，内核只看地址、页与权限；源语言函数名是否保留在非装载符号表中，不影响 CPU 跳转。
+
+ELF 入口通常是 \texttt{\_start}，而非 \texttt{main}。编译器驱动加入的 C 运行时启动代码（C runtime startup, CRT）接收内核建立的参数、环境和辅助向量，初始化 libc，运行构造器，调用 \texttt{main}，再把返回值交给终止流程并运行析构器\cite{bin-linux-execve}。因此，本案例中 \texttt{putint} 的完整旅程是：汇编源提出一个名字；目标文件把它保存为重定位义务；链接器从归档中选择定义并求出地址；内核与 CRT 建立执行上下文；CPU 最终按已修补的调用序列进入运行时实现。所谓“编译成机器码”若省略这条链，便漏掉了让机器码真正成为程序的制度部分。
+
+\subsection{一次小规模贯通检查}
+
+为确认上述工具链确实能承载案例，而不是把测试本身写成章节主题，我们只保留一个紧凑的端到端检查。C 观察载体、SysY 前端路径、手写 LLVM IR 和手写 RV64 汇编分别形成可执行文件；对同一组边界输入，它们得到相同的标准输出和退出状态。该结果说明本章追踪的四条路径能够贯通当前环境，不承担“从有限样例证明全体程序等价”的任务。
 
 \begin{table}[t]
-\caption{二进制检查工具与可证实的问题}
-\label{tab:binarytools}
-\centering
-\small
-\begin{tabular}{lp{.34\linewidth}p{.39\linewidth}}
-\toprule
-工具 & 主要对象 & 本案例证据\\
-\midrule
-\texttt{readelf/readobj} & ELF 头、节、符号、重定位、程序头 & \texttt{ET\_REL}、10 节、18 个 \texttt{RELA} 项、RVC/LP64D 标志\\
-\texttt{objdump -dr} & 指令解码并穿插重定位 & \texttt{call} 的 \texttt{AUIPC/JALR + CALL\_PLT/RELAX}\\
-\texttt{nm} & 面向名字的定义/未定义摘要 & 对象中的 \texttt{U getint/putint/putch}；库中的 \texttt{T} 定义\\
-\texttt{ar t}/\texttt{nm -s} & 归档成员与符号索引 & 运行时成员及其可满足的接口\\
-\bottomrule
-\end{tabular}
+  \centering
+  \caption{案例的端到端贯通结果。}
+  \label{tab:execution-smoke}
+  \small
+  \begin{tabularx}{\textwidth}{@{}p{0.19\textwidth}X@{}}
+    \toprule
+    维度 & 结果 \\
+    \midrule
+    可执行形式 & C、SysY、手写 IR、手写 RV64 \\
+    输入到输出 & \((-1,0,1,4,8,10)\mapsto(0,0,-8,8,16,16)\) \\
+    退出状态 & 全部执行均为 0 \\
+    \bottomrule
+  \end{tabularx}
 \end{table}
 
-GNU \texttt{readelf} 有意不依赖 BFD，可作为调查工具缺陷时的第二解析器；LLVM 工具则与本实验的生成链自然配套\cite{bin-gnu-binutils,bin-llvm-tools}。最稳妥的复现记录应同时保存工具版本、完整命令和原始输出。下一节将沿 \(D/U\) 状态继续：解析只是链接器的第一步，此后还要做布局、重定位、松弛，并把面向链接的节重新组织为面向加载的段。
+运行时析构器还向标准错误写出计时汇总；它属于库的生命周期行为，而非点积函数的返回值。将标准输出、标准错误与退出码分开，足以避免把运行时诊断误当成算法结果。更一般地，测试适合发现实现没有遵守已经说明的合同，形式化语义则说明合同是什么：二者互补，但不应让可复现性清单取代对汇编、重定位与装载机制本身的解释。
+
+从这一条 \texttt{putint} 调用可以提炼出比工具命令更持久的原则：\emph{跨层设计的关键，不是尽早消灭未知量，而是把未知量变成下一层可求解、可检查且不丢语义的义务。} 汇编器保留符号与重定位，链接器保留装载所需的段和动态元数据，加载器再把相对结构实例化为一次具体进程。延迟决定不是拖延工作，而是让决定发生在信息最充分的层次；这与前文从源语言逐步降低到指令的思想正好首尾相接。

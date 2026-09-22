@@ -1,240 +1,155 @@
-\section{从字符到带类型程序：预处理与编译前端}
+\section{意义先于代码生成：预处理与编译前端}
 \label{sec:frontend}
 
-源文件看似已经“写明”程序，但字符本身并不知道 \texttt{clipped\_dot} 是函数、\texttt{a[i]}
-是左值、\texttt{-8} 的负号是运算符，或 \texttt{putint} 应接收一个整数。本节沿着字符、预处理
-记号、语法结构和带类型 AST 四层表示，说明这些事实如何逐层成立。所谓\emph{编译前端}
-（compiler frontend）在这里指面向源语言、产出带语义结构的部分；它不是“所有生成 LLVM IR
-以前发生的命令”的同义词。
+源文件中的字符并不知道 \texttt{clipped\_dot} 是函数、\texttt{a[i]} 是可读取的整数对象，
+也不知道 \texttt{-8} 中的负号是运算符。代码生成之前，编译器必须先回答一个更根本的问题：
+这些记号能否组成一个有意义的程序？前端把字符逐步组织成记号、语法结构、名字绑定和带类型
+操作；它产出的不是一棵漂亮的括号树，而是一份足以承担后续降低的语义结构。
 
-\subsection{先澄清：SysY 语义载体与 C 观察载体}
+\subsection{两个入口：规范 SysY 与 C 观察窗口}
 
-规范 SysY 文件不写 \texttt{\#include}，因为 SysY 运行时函数由编译器按语言约定识别；课程的
-SysY 语法也没有定义 C 预处理器。为了满足对完整语言处理系统的观察要求，又不污染规范源，实验
-另有一个 C17 观察载体。它的首行和所包含头文件中的关键指令如下：
-
+规范 SysY 源文件不含 \texttt{\#include} 与宏，因为 SysY 语言本身不定义 C 预处理器，运行时
+函数由语言环境提供。为了观察成熟工具的完整前端路径，配套工程另有一个 C17 载体，其中包含：
 \begin{verbatim}
 #include "case_config.h"
 
 /* case_config.h */
-#ifndef PREFLIGHT_CASE_CONFIG_H
-#define PREFLIGHT_CASE_CONFIG_H
 #define VECTOR_LENGTH 8
 #define TERM_MIN (-8)
 #define TERM_MAX 12
 int getint(void);
 void putint(int value);
 void putch(int value);
-#endif
 \end{verbatim}
+三个宏与运行时声明让 Clang 能在本案例的 C/SysY 兼容子集上展示预处理和 AST。两份源码并非
+两套规范：SysY 文件定义本文要解释的程序，C 文件只是观察窗口。它额外使用 \texttt{const}、
+\texttt{main(void)} 和 \texttt{else if} 等 C 写法，但这些差异不改变式~\eqref{eq:clipped-dot}
+描述的计算。把这个边界说清一次，后文便不必反复用工具来源打断机制讲解。
 
-\texttt{case\_config.h} 为 Clang 提供 \texttt{getint/putint/putch} 的 C 函数声明；三个对象式宏
-提供数组长度和两个截断界；包含卫士（include guard）用 \texttt{\#ifndef}/\texttt{\#define}
-保证同一翻译单元内重复包含时声明只进入记号流一次。这里必须诚实说明：当前 C 载体不是直接
-包含 \texttt{.sy}，而是手工镜像函数体。它与规范 SysY 的精确语法差异还包括输入数组形参的
-\texttt{const} 限定、\texttt{main(void)}、用 \texttt{else if} 简写嵌套条件、引入
-\texttt{result} 临时变量以及 Doxygen 注释。这些差异不改变式~\eqref{eq:clipped-dot} 的可观察
-函数，但手工镜像会带来漂移风险；共享已知答案、结构检查和代码审阅是当前控制措施，不能把它
-冒充“单一源文件生成”。
+\subsection{预处理：在类型出现之前改写记号}
 
-这种安排把三类陈述分开：（1）SysY 文档规定的语言/运行时事实；（2）ISO C 与 Clang 文档规定
-的预处理和 C 前端事实；（3）这个兼容子集在指定 Clang 版本中的观察。库存 Clang 接受观察用
-翻译单元，并不能证明它接受所有合法 SysY 或拒绝所有非法 SysY。
+C 的\emph{翻译阶段}（translation phases）规定一种概念顺序：字符映射和行拼接之后，源文本
+被识别为预处理记号，注释被空白取代；随后处理包含、条件指令和宏展开，再把结果交给语言的
+语法与语义分析\cite{front-c-n1570}。这是语义次序，不要求实现真的多次扫描文件。GNU CPP
+会为性能融合早期步骤；Clang 的词法器、预处理器和解析器也以流式方式协作
+\cite{front-gcc-cpp-initial,front-clang-internals}。理论分层回答“谁负责什么”，实现融合则减少
+中间物化、提高局部性；二者并不矛盾。
 
-\subsection{翻译阶段：规范顺序与实现融合}
+预处理按\emph{记号}而非任意字符子串工作。\texttt{VECTOR\_LENGTH} 被对象式宏替换为
+\texttt{8}；\texttt{TERM\_MIN} 被替换为记号序列 \texttt{( - 8 )}。此时预处理器既不知道
+它们将用于数组维度，也不知道结果类型是 \texttt{int}。直到后续语法把 \texttt{-} 解释为一元
+运算，语义分析才把整个表达式定为整数。宏因而具有很低的语义门槛：它快速、历史兼容、能在
+解析前适配平台，却无法借助语言类型保证替换结果合理。
 
-C 标准用若干\emph{翻译阶段}（translation phases）描述“仿佛按此顺序”发生的处理：源文件字符
-映射、反斜杠换行拼接、识别预处理记号并把注释替换为空格、执行预处理指令并展开宏、处理字符
-与字符串字面量、相邻字符串拼接，最后把预处理记号转换为翻译记号并完成语法/语义分析；各翻译
-单元随后交给链接阶段\cite{front-c-n1570}。这一语义顺序不要求实现为多趟文件扫描。GNU CPP
-明确说明最初几步会为了性能一并完成\cite{front-gcc-cpp-initial}；Clang 中词法器向预处理器持续
-提供记号，预处理器再把展开后的流交给解析器，故“先完整词法分析、再完整预处理”同样不是准确
-的进程时间线\cite{front-clang-internals}。
+\texttt{\#include} 也不只是一次盲目的文本粘贴。实现根据引号形式、\texttt{-I}、系统目录和
+目标 sysroot 定位文件，扫描其中的指令和记号，再返回原输入。包含卫士通过条件编译让头文件
+内容在同一翻译单元中只进入一次。被 \texttt{\#if 0} 排除的分支甚至无须构成合法 C 语法，
+因为解析器永远看不到它；而案例中的 \texttt{if (term < lo)} 必须进入 AST 并成为运行时选择。
+条件编译以牺牲局部可见性为代价，把构建配置变成程序的一部分，这正是大型 C/C++ 工程既依赖
+它又努力约束它的原因。
 
-这里需要区分\emph{预处理记号}（preprocessing token）与稍后带语言意义的记号。预处理阶段先
-识别标识符、预处理数、字符串/字符字面量和标点，使宏替换按记号而非任意字符串进行；一些
-预处理数即使不是合法的 C 数值常量，也可先作为预处理记号存在。宏展开完成后，解析器看到的是
-结果流，而不是“宏调用 AST”。这解释了为什么源中 \texttt{VECTOR\_LENGTH} 若是宏，会在 AST
-中表现为整数常量（通常保留拼写/展开位置以支持诊断），却没有一个运行时读取“宏变量”的动作。
+\subsection{从记号序列到语法结构}
 
-\subsection{包含、宏与条件编译分别改变什么}
-
-\paragraph{包含。}
-\texttt{\#include} 常被说成“粘贴头文件文本”，但更精确的描述是：实现定位所选文件，把它作为
-输入继续扫描、执行其中指令和宏，然后回到原文件。查找结果受引号/尖括号形式、\texttt{-I}、
-系统目录、资源目录、目标 sysroot 等影响，因此可复现记录应保存实际搜索路径，而不是只保存
-\texttt{\#include "case\_config.h"}。\texttt{clang -E -H} 或详细模式能显示选择了哪个物理文件；
-预处理输出中的行标记则在展开文本与原文件位置间建立诊断映射\cite{front-gcc-cpp-include}。
-
-\paragraph{宏。}
-对象式宏把一个标识记号替换为记号序列；函数式宏还要收集实参、按规则预展开、替换并重新扫描。
-字符串化 \texttt{\#} 和记号粘合 \texttt{\#\#} 对实参展开有特殊规则，正在展开的宏还需暂时
-禁用，以免无效递归。因而宏不是无条件文本替换，更不是类型化函数调用\cite{front-gcc-cpp-macro}。
-在观察载体里，\texttt{VECTOR\_LENGTH} 被替换为 \texttt{8}；
-\texttt{\#define TERM\_MIN (-8)} 的括号也属于替换序列，而 \texttt{-8} 仍在后续
-词法/语法层成为一元负号作用于常量 8。预处理器不知道该表达式最终类型是不是 \texttt{int}。
-
-\paragraph{条件编译。}
-\texttt{\#if}/\texttt{\#ifdef} 决定哪些预处理记号进入后续流。被 \texttt{\#if 0} 排除的分支
-无需构成合法 C 语法，因为解析器根本不会接收它；不过条件指令自身仍须被预处理器正确配对。
-这与运行时 \texttt{if} 根本不同：案例中 \texttt{if (term < lo)} 会进入 AST、IR 和目标控制流，
-而未选中的预处理分支在解析前已经消失。条件编译的能力适合平台适配，也可能令构建配置成为
-程序语义的隐含输入。本例实际观察的是头文件包含卫士：第一次包含后宏
-\texttt{PREFLIGHT\_CASE\_CONFIG\_H} 已定义，若再次包含，受保护正文便被排除。
-
-可用以下停止点建立可检查证据：
-\begin{verbatim}
-clang -std=c17 -Ipreflight/include -E \
-      preflight/src/clipped_dot.c -o clipped_dot.i
-clang -std=c17 -Ipreflight/include -E -dM \
-      preflight/src/clipped_dot.c > macros.txt
-clang -fsyntax-only -Xclang -dump-tokens \
-      -std=c17 -Ipreflight/include \
-      preflight/src/clipped_dot.c \
-      2> tokens.txt
-\end{verbatim}
-\texttt{.i} 是预处理记号流的一种可读投影，并非预处理器内部状态的完整序列化；项目的自动取证
-执行第一条命令并确认三个宏名已消失、常量值已出现。后两条是补充观察方法：\texttt{-dM} 还会
-包含预定义和头文件宏，不能误称为“案例自己定义的宏列表”。
-
-\subsection{词法：从拼写到记号}
-
-\emph{词法分析}（lexical analysis）把字符组织成带种类、拼写和源位置的记号。对循环片段
-\texttt{term = a[i] * b[i];}，解析器接收的核心次序可概括为：
+\emph{词法分析}（lexical analysis）把字符组织成带种类、拼写和源位置的记号。循环中的
+\texttt{term = a[i] * b[i];} 形成如下核心序列：
 \[
-\begin{aligned}
- &\textit{identifier(term)},=,\textit{identifier(a)},[,\textit{identifier(i)},],*,\\
- &\textit{identifier(b)},[,\textit{identifier(i)},],;.
-\end{aligned}
+ \mathit{id}(term),=,\mathit{id}(a),[,\mathit{id}(i),],*,
+ \mathit{id}(b),[,\mathit{id}(i),],;.
 \]
-空格与注释主要用于分隔和诊断定位，不成为普通 AST 节点；\texttt{while} 被识别为关键字而非
-可由符号表重新解释的普通标识符；\texttt{<}、\texttt{>}、\texttt{=} 的区别在这一层确定。
+在这一层，\texttt{while} 已是关键字，\texttt{<=} 与 \texttt{< =} 已有不同记号划分，但
+\texttt{term} 是否已声明仍无从判断。类似地，\texttt{-8} 通常是运算符 \texttt{-} 和常量
+\texttt{8} 两个记号，而不是一个“负八”记号。
 
-负常量尤其适合展示层次边界。在规范 SysY 调用的实参 \texttt{-8}（C 载体中则来自宏
-\texttt{TERM\_MIN}）里，通常没有单个“负八字面量”记号，而是 \texttt{-} 与整数常量
-\texttt{8} 两个记号。语法分析把前者解释为一元运算，
-语义分析再确定其操作数和结果的整数类型，常量求值可以得到 $-8$。到了 LLVM IR，
-\texttt{i32 -8} 又可以作为一个常量操作数出现。不同层的文本相似或不同，都不能单凭拼写判断
-它们是同一种对象。
+\emph{语法分析}（parsing）依据文法把线性序列组织成树。抽取与案例有关的三个产生式，可写成
+\[
+\begin{array}{rcl}
+E &::=& E[E]\mid E*E\mid E+E\mid \mathit{id}\mid \mathit{integer},\\
+S &::=& \mathit{while}\ (E)\ S\mid \mathit{if}\ (E)\ S\ \mathit{else}\ S
+       \mid E;,\\
+B &::=& \{S^*\}.
+\end{array}
+\]
+运算符优先级使 \texttt{a[i] * b[i]} 先构造两个下标节点，再构造乘法节点；“悬空的
+\texttt{else}”规则把 \texttt{else} 与最近未配对的 \texttt{if} 结合。真实 Clang 采用递归
+下降解析，并在识别结构时调用 Sema，而不是先造一棵完整的纯语法树再进行完全独立的一遍检查
+\cite{front-clang-internals}。责任上区分 parsing 与 semantic analysis 依然重要，实现上交错
+二者则能改善错误恢复和上下文相关解析。
 
-词法器还须处理“最长匹配”等规则：\texttt{else if} 是两个关键字，\texttt{<=} 是一个标点记号，
-而 \texttt{< =} 是两个；\texttt{//} 开始的注释在翻译早期被空白替代。错误的字符序列会产生
-词法诊断，但“\texttt{term} 是否已声明”不是词法问题——那需要名字查找。
+\subsection{类型判断：为什么 \texttt{a[i] * b[i]} 有意义}
 
-\subsection{语法：记号如何形成结构}
+令类型环境 $\Gamma$ 把名字映射到类型。本例函数体中有
+$\Gamma(a)=\Gamma(b)=\mathtt{int}^{*}$、$\Gamma(i)=\mathtt{int}$。用
+$\operatorname{lval}(\tau)$ 表示可定位、尚待读取的 $\tau$ 类型对象，下标与读取规则可以压缩为
+\[
+\frac{\Gamma\vdash a:\mathtt{int}^{*}\qquad
+      \Gamma\vdash i:\mathtt{int}}
+     {\Gamma\vdash a[i]:\operatorname{lval}(\mathtt{int})}
+\quad
+\frac{\Gamma\vdash e:\operatorname{lval}(\tau)}
+     {\Gamma\vdash \operatorname{load}(e):\tau}.
+\]
+再结合整数乘法规则，可得到一个真正的推导：
+\begin{equation}
+\frac{
+  \Gamma\vdash a[i]:\operatorname{lval}(\mathtt{int})\quad
+  \Gamma\vdash b[i]:\operatorname{lval}(\mathtt{int})
+}{
+  \Gamma\vdash \operatorname{load}(a[i]) *
+                   \operatorname{load}(b[i]):\mathtt{int}
+}.
+\label{eq:frontend-typing}
+\end{equation}
+源代码没有写 \texttt{load}；C/Clang AST 以隐式的左值到右值转换表达它。数组实参传给
+\texttt{clipped\_dot} 时则发生数组到指针调整，而不是复制八个整数。式
+\eqref{eq:frontend-typing} 说明了解析树为何不够：相同形状的 \texttt{x[y]} 只有在基址和索引
+满足类型前提时才有程序意义，也只有这样，下一层才有理由生成元素地址与 32 位加载。
 
-\emph{语法分析}（parsing）依据文法把线性记号流组织成声明、语句和表达式结构。Clang 使用
-递归下降解析器，并在识别产生式时调用 Sema；它并非先构造一棵完整的具体语法树，再启动一个
-完全分离的语义遍历\cite{front-clang-internals}。因此“词法→语法→语义”仍是责任上的良好分层，
-但不应被叙述为三遍彼此隔绝的实现。
+\input{figures/frontend-typing}
 
-以 \texttt{acc = acc + term;} 为例，运算符优先级使右侧先形成加法表达式，整体再成为赋值表达式；
-左结合规则使连续加法按规定分组。\texttt{a[i] * b[i]} 先形成两个下标表达式，再形成乘法节点。
-\texttt{else} 与最近尚未配对的 \texttt{if} 结合，使乘积恰好落入“小于下界”“大于上界”“区间
-内”三种路径之一。AST 可简化表示为：
+丰富的类型和源位置信息使前端能够给出精确诊断，也能把隐式操作明确交给 IRGen；代价是 AST
+高度依赖源语言，节点繁多，维护和遍历成本较高。反过来，若过早压平为少数通用节点，后端接口
+会更简单，却很难告诉用户究竟是哪一个源级规则失败。生产前端因此宁可在 AST 中保存比优化器
+需要更多的信息，再在降低时有选择地丢弃。
 
-\begin{verbatim}
-WhileStmt
-|- condition: BinaryOperator '<'
-|  |- DeclRefExpr i : int
-|  `- DeclRefExpr n : int
-`- CompoundStmt
-   |- VarDecl term : int
-   |  `- BinaryOperator '*'
-   |     |- ArraySubscriptExpr a[i] : int lvalue
-   |     `- ArraySubscriptExpr b[i] : int lvalue
-   |- IfStmt
-   |  |- BinaryOperator '<' (term, lo)
-   |  `- ... else IfStmt ('>' (term, hi))
-   |- BinaryOperator '=' (acc, '+' (acc, term))
-   `- BinaryOperator '=' (i, '+' (i, 1))
-\end{verbatim}
+\subsection{名字、作用域和值类别}
 
-这棵摘录是为阅读而压缩的结构图，不冒充某次 \texttt{-ast-dump} 的逐字输出。真实 Clang AST
-通常还含源范围、隐式转换和类型信息；开发者文本/JSON dump 是观察接口，不是跨版本稳定的交换
-格式\cite{front-clang-ast}。
+\emph{语义分析}（semantic analysis）还负责把标识符绑定到声明。函数形参
+\texttt{a,b,n,lo,hi} 与局部变量 \texttt{acc,i,term} 各有声明实体和作用域；循环体中的每个
+\texttt{i} 都解析到同一个局部声明，\texttt{term} 则只在相应复合语句内可见。若在声明之前
+引用一个名字，字符与语法可以完全合法，名字查找仍会拒绝程序。符号表因而不只是“字符串到
+地址”的字典，而是作用域、声明类别、重声明关系和类型信息共同参与的结构。
 
-\subsection{Sema：名字、作用域、类型与隐式操作}
+值类别进一步决定表达式能做什么。\texttt{a[i]} 是可赋值对象的\emph{左值}（lvalue）；在
+乘法中需要其数值，所以发生读取；在赋值号左侧则保留位置含义。\texttt{term < lo} 的两个操作数
+被读取为整数，比较结果可作为条件；\texttt{putch(10)} 必须解析到接收一个整数且无返回值的
+运行时声明。前端在这里确立调用类型和副作用边界，却不指定参数最终位于 \texttt{a0} 还是栈上，
+因为那是目标 ABI 才掌握的决定。
 
-\emph{语义分析}（semantic analysis）回答“结构是否在该语言中有意义”。Clang 将这组职责集中
-在 Sema 库：声明与名字查找、作用域、类型检查、隐式转换、常量表达式约束以及带源位置的诊断。
-Sema 在解析期间构造/完善 AST，所以最终 AST 不只是语法括号树，而是带类型的源语言语义图景。
+常量求值也不同于宏展开。规范源中的 \texttt{8} 可在编译期证明为合法数组维度；C 载体中的
+\texttt{VECTOR\_LENGTH} 要先展开成同一个字面量，再接受带类型的常量表达式规则。前者属于
+语言语义，后者只是解析前的记号改写。把两者混为一谈，会让人误以为预处理器理解数组类型。
 
-\paragraph{符号与作用域。}
-\emph{符号表}（symbol table）把标识符出现与声明实体联系；\emph{作用域}（scope）规定某个声明
-在哪些源位置可见。顶层的 \texttt{clipped\_dot} 和 \texttt{main} 是函数实体；函数体内形参
-\texttt{a,b,n,lo,hi} 与局部变量 \texttt{acc,i,term} 分属相应块作用域。\texttt{term} 只在循环
-体的复合语句内可见，而 \texttt{i} 的生存期覆盖整个函数体。每一个 \texttt{DeclRefExpr i}
-都应解析到同一个局部声明，而不是仅凭字符串相等猜测。若在声明 \texttt{i} 之前使用它，字符和
-语法都可能完全合法，名字查找仍应拒绝程序。
+\subsection{诊断：前端的用户界面}
 
-\paragraph{类型与值类别。}
-\texttt{a} 的源形参写作 \texttt{int a[]}，在函数参数位置调整为指向整数的参数；在
-\texttt{a[i]} 中，整数索引选择一个 \texttt{int} 元素。该表达式先是可定位对象的\emph{左值}
-（lvalue），乘法需要它的值，于是 AST 中可见隐式的左值到右值转换。把数组实参传给
-\texttt{clipped\_dot} 时则发生数组到指针转换（array-to-pointer conversion），不是复制八个
-整数。\texttt{n}、\texttt{lo}、\texttt{hi} 按值传入。Clang AST 有意接近源语言，通常以
-\texttt{ImplicitCastExpr} 暴露这些虽未写出却由语言要求的操作\cite{front-clang-ast}。
+考虑把调用改成 \texttt{clipped\_dot(a,b,n,-8)}。词法器仍可产生全部记号，解析器也能构造
+四实参调用；只有名字解析找到五参数声明并进行参数匹配后，Sema 才能指出实参数量不足。
+同样，\texttt{a[1.5]} 可以形成下标语法，却违反整数索引约束。诊断并非编译器之外的附属文本，
+而是前端无法建立带类型表示时面向程序员的结果。
 
-表~\ref{tab:semantic-nodes} 将几个关键节点的前端义务汇总起来。
+这里存在一个典型工程折中。为了在第一个错误后继续报告更多问题，生产前端常构造含无效节点的
+局部 AST 并进行错误恢复；若坚持“任何不完美输入立即终止”，实现更简单，用户体验却很差。
+恢复过度又可能产生级联误报。好的前端在保持内部不变量与保留足够上下文之间取平衡，而不是
+把形式文法的拒绝/接受二分直接当成完整产品行为。
 
-\begin{table}[t]
-\caption{案例节点的语义分析结果与后续义务。}
-\label{tab:semantic-nodes}
-\centering
-\small
-\begin{tabular}{p{3.0cm}p{4.4cm}p{4.2cm}}
-\hline
-节点 & 前端确立的事实 & 交给后续层的义务 \\
-\hline
-\texttt{a[i]} & \texttt{a} 指向 \texttt{int}，\texttt{i} 为整数，结果为 \texttt{int} 左值 & 形成正确元素地址并加载 32 位值 \\
-\texttt{a[i]*b[i]} & 两操作数经值转换后为 \texttt{int}，结果为 \texttt{int} & 按源语言整数语义乘法；案例证明无溢出 \\
-\texttt{term < lo} & 两侧为 \texttt{int}，结果可作条件 & 建立真假控制流且只执行所选路径 \\
-\texttt{clipped\_dot(...)} & 解析到五参数函数；两地址、三整数实参与形参匹配 & 形成 ABI 正确的调用或语义等价内联 \\
-\texttt{putch(10)} & 运行时声明解析为接收一个整数、无返回值 & 把 10 传给外部调用并保留副作用顺序 \\
-\hline
-\end{tabular}
-\end{table}
+\subsection{前端的终点：已解释，但尚未布局}
 
-\paragraph{常量规则。}
-\emph{常量表达式}（constant expression）是在规定上下文可于编译期求值、并满足语言额外限制的
-表达式。SysY 要求数组各维长度为可编译期求值的非负整数；规范源中的字面量 \texttt{8}
-显然满足约束。C 载体里的 \texttt{VECTOR\_LENGTH} 则先由预处理器替换为同一字面量。
-同理，规范源的 \texttt{-8} 在词法上是 \texttt{-} 和 \texttt{8}，经语义检查与常量求值得到
-整数 $-8$；C 载体的 \texttt{TERM\_MIN} 先展开为带括号的相同记号序列。常量求值不等于宏
-展开：前者在
-类型和语言语义已经介入后求值，后者在解析前替换记号。
+到带类型 AST 为止，前端已经知道数组元素是整数、比较采用有符号语义、循环存在一条结构化回边，
+运行时调用具有特定函数类型。它仍不知道数组在栈帧中的偏移、循环值占用哪个寄存器、外部调用
+位于哪个地址；这些信息既依赖目标，也尚无必要决定。Clang IRGen 因而把结构化控制拆成基本块
+和分支，把左值访问拆成地址与加载/存储，把函数调用变成带类型 LLVM 调用
+\cite{front-lattner-adve}。
 
-数组初始化也需要语义处理。八个初值分别转换并写入对应元素；若列表短于数组长度，SysY 规则会
-对余下元素作零初始化，而本例刻意给满，避免把隐式补零混入点积结果。局部变量
-\texttt{acc}、\texttt{i}、\texttt{term} 都在读取前有明确定义，从而不以未初始化值作为跨层契约。
-
-\subsection{诊断是失败的语义产物}
-
-错误消息不是编译器外的附属打印，而是前端在无法建立表示契约时产生的用户界面。一个受控变异
-可以把用户调用改为
-\begin{verbatim}
-clipped_dot(a, b, n, TERM_MIN);  /* missing TERM_MAX */
-\end{verbatim}
-词法器仍能产生全部记号，解析器也能形成四实参调用的语法；Sema 在把调用解析到五形参函数后，
-才能指出实参数量不足，并把诊断定位到调用及函数声明。另一个变异 \texttt{a[1.5]} 在 C 中可被
-解析为下标结构，但下标类型约束失败。这样的变异应位于隔离的诊断实验中，不应污染规范案例。
-
-诊断同时说明为什么 AST 是“已解释的源程序”而非简单解析树：对于合法调用，AST 的被调实体、
-函数类型和隐式转换均已确定；对于非法调用，编译器可能为错误恢复构造部分节点，但后续代码生成
-没有义务把它当作合法程序。一个稳健的报告应保存命令、工具版本、退出状态和关键诊断，而不对
-措辞逐字符断言，因为诊断文本不是稳定 ABI。
-
-\subsection{AST 的终点也是下一层的起点}
-
-到带类型 AST 为止，前端已经知道：两个数组元素是 32 位整数；比较按有符号整数意义进行；
-\texttt{while} 有一个回到条件的结构；运行时调用具有特定函数类型。但它尚未决定循环值放在哪个
-物理寄存器、数组在栈帧何处、调用地址是多少，也不必永久保存宏展开的高层意图。Clang IRGen
-消费 AST，把结构化控制转成基本块和分支，把左值访问转成地址与加载/存储，把函数调用转成带
-类型 IR 调用。LLVM 的经典设计正是让语言相关语义先由前端消化，再进入可供跨语言优化的带类型
-SSA 表示\cite{front-lattner-adve}。
-
-这是一处有损但受控的抽象下降：源位置和调试元数据可以保留部分出处，然而后续优化器不应被假定
-能恢复 \texttt{else if} 的原始拼写、宏定义边界或变量为何命名为 \texttt{term}。下一章因此不再
-问“这行源代码被翻成哪一行 IR”，而问更稳健的问题：控制依赖、数据依赖、内存对象和调用副作用
-分别由哪些 IR 对象承载。表示改变了，契约没有中断。
+这种降低有意丢失宏边界、\texttt{else if} 的原始拼写和许多源级类别，同时让控制流、数据流与
+内存操作变得可以统一分析。前端证明了 \texttt{a[i]} 是什么；下一层必须回答它怎样成为地址，
+以及循环中的 \texttt{i} 和 \texttt{acc} 如何在多条控制流边之间保持身份。这正是控制流图、
+支配关系与 SSA 出场的理由。

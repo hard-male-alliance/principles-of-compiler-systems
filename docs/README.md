@@ -13,6 +13,11 @@
 
 ### 设计与研究记录
 
+- [教程式综述改写架构](knowledge/revision-editorial-brief.md)
+- [形式化主线设计](knowledge/revision-formalization-map.md)
+- [叙事审计](knowledge/revision-narrative-audit.md)
+- [统一视觉系统](knowledge/revision-visual-system.md)
+- [教材式写作与可视化最佳实践](research/revision-pedagogy-best-practices.md)
 - [报告验收映射](knowledge/report-acceptance.md)
 - [贯穿案例与工件架构](knowledge/case-study-architecture.md)
 - [独立验证计划](knowledge/validation-plan.md)

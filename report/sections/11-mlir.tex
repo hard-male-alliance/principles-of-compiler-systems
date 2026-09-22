@@ -1,123 +1,59 @@
-\section{从单层交接面到多层语义：MLIR 与 AscendNPU IR}
+\section{多层中间表示：让信息在需要时才消失}
 \label{sec:mlir}
 
-前文把同一个截断点积追踪到 LLVM IR、RV64 指令与 ELF 映像。那条路线很适合回答“一个已相当接近机器的程序如何成为进程”，却不是所有编译问题的最佳起点：若过早把点积写成地址递增、载入、乘加和分支，后续优化器必须从低层偶然形态中重新猜测“这是一个带归约维的结构化计算”。多层中间表示（multi-level intermediate representation）试图把这项猜测改成显式契约。MLIR 的贡献并非声称 LLVM 只有一种内部表示，而是提供一套可扩展的共同基础设施，使不同抽象层的操作、类型和属性能在同一个 SSA 模块中共存，并在明确的合法性规则下逐步替换\cite{adv-mlir-cgo,adv-mlir-langref}。
+LLVM IR 适合表达已经具体化的控制流、内存访问和调用约定，但编译器并不总想立刻回答这些问题。对截断点积而言，式~\eqref{eq:clipped-dot} 首先说的是三个结构：逐元素相乘、逐元素限幅、沿索引维归约。若前端立即把它们展开为指针递增和条件跳转，后端仍可能生成好代码，却必须从偶然的循环形状中重新辨认这些结构。多层中间表示（multi-level intermediate representation）的核心思想不是增加更多“必经阶段”，而是延长有用信息的寿命，并在决策真正发生时才将其具体化。MLIR 为这种做法提供了可扩展的操作、类型、属性、接口和转换基础设施\cite{adv-mlir-cgo,adv-mlir-langref}。
 
-本节有意分开三种证据。其一，MLIR 机制来自同行评审论文和上游文档；其二，AscendNPU IR 的结构与 \code{VecAdd} 来自官方文档及固定版本源代码；其三，把本文截断点积映射为 \code{tensor/linalg/scf/vector/Ascend} 路径，只是\emph{未执行的展望}。当前 Windows 主机没有 CANN 与 Ascend 设备，因而本文没有编造 IR 快照、设备输出或性能数字。
+\input{figures/mlir-lowering}
 
-\subsection{方言不是流水线阶段，接口才使组合成立}
+\subsection{混合方言是正常状态}
 
-方言（dialect）是操作、类型与属性的语义命名空间；它不是一张规定“先出现 A、后只能出现 B”的阶段清单。一个模块可同时含有 \code{linalg} 的结构化计算、\code{tensor} 的值语义、\code{arith} 的标量运算、\code{scf} 的控制结构与目标方言的内在操作。因而图~\ref{fig:mlir-partial-order} 不是全序楼梯，而是逐渐改变组成比例的混合表示。这里所谓“更高”或“更低”只是针对某项信息：\code{tensor} 与 \code{memref} 的关键差异是值与存储身份，\code{linalg} 与 \code{scf} 的关键差异是结构化迭代意图与显式循环；它们不能被一个标量高度完全排序。
+方言（dialect）是语义命名空间，不是流水线中的独占阶段。一个合法模块可以同时使用 \code{linalg} 描述结构化归约、\code{tensor} 表达值语义、\code{arith} 表达标量比较、\code{scf} 表达循环，并夹杂尚未转换的调用。图~\ref{fig:mlir-lowering} 因而不是一列互斥方框：降低过程改变的是模块中各种抽象的比例，而不是按下开关后把整个程序瞬间换成“下一种 IR”。
 
-\begin{figure}[H]
-  \centering
-  \resizebox{\textwidth}{!}{%
-  \begin{tikzpicture}[node distance=7mm and 8mm, every node/.style={font=\scriptsize},
-    box/.style={draw,rounded corners,align=center,inner sep=4pt},
-    arr/.style={-{Stealth[length=2mm]},thick}]
-    \node[box] (sem) {数学语义\\截断映射 $+$ 点积归约};
-    \node[box,right=of sem] (mix1) {\code{tensor} $+$ \code{linalg} $+$ \code{arith}\\形状、索引映射、归约维};
-    \node[box,right=of mix1] (mix2) {\code{scf} $+$ \code{vector} $+$ \code{memref}\\循环、虚拟 SIMD、存储};
-    \node[box,right=of mix2] (target) {目标方言 $+$ \code{llvm}\\地址空间、ABI、内在函数};
-    \draw[arr] (sem)--node[above]{结构化} (mix1);
-    \draw[arr] (mix1)--node[above]{改写/转换} (mix2);
-    \draw[arr] (mix2)--node[above]{目标化} (target);
-    \node[draw,dashed,rounded corners,fit=(mix1)(mix2),inner sep=1mm] {};
-  \end{tikzpicture}%
-  }
-  \caption{渐进式降低（progressive lowering）的偏序视图。虚线区域表示多种抽象共存，而非一次把整个模块换成“下一种 IR”。}
-  \label{fig:mlir-partial-order}
-\end{figure}
-
-仅有命名空间仍可能把巨型 \code{switch} 分散到多个目录。MLIR 的接口（interface）允许分析和变换询问“该操作是否有内存效果、是否具有目的地风格、如何分块”，而不枚举所有具体操作。操作接口描述单个操作的能力，方言接口描述一族操作的行为，外部模型则允许变换库在不反向耦合核心方言的情况下补充实现\cite{adv-mlir-interfaces}。例如 \code{LinalgStructuredInterface} 暴露迭代器类型与索引映射，\code{DestinationStyleOpInterface} 把输出/初值操作数显式化，\code{MemoryEffectOpInterface} 为死代码删除与循环不变量外提提供副作用事实；\code{BufferizableOpInterface} 则说明张量操作如何读、写、别名并改写为缓冲区。接口把“可应用某类算法”变为结构化能力，而不是对方言名字的猜测。
-
-这对截断点积的直接意义是：乘法后的逐项截断是可融合的逐元素区域，随后求和是具有一个归约迭代器的结构化操作。只要这些事实还在接口中，分块、融合和向量化便可共享通用实现；若已经把它们粉碎成任意 CFG，合法性分析就必须昂贵地重建这些事实。Linalg 的设计动机正是延后这种信息损失，而不是承诺任何保留高层 IR 的程序必然更快\cite{adv-mlir-linalg-rationale}。
-
-\subsection{改写、转换与“合法”究竟指什么}
-
-模式改写（pattern rewriting）描述局部等价替换；方言转换（dialect conversion）在此之上增加全局验收合同。\code{ConversionTarget} 把操作声明为合法、非法或动态合法，转换模式负责把非法项变成合法项，\code{TypeConverter} 同步改变结果、操作数以及区域和基本块参数的类型\cite{adv-mlir-conversion}。动态合法性很重要：同一个 \code{func.call} 可能只在签名已完成类型转换时才合法；递归合法性则可在外层操作满足条件后接纳其整个内部区域。
-
-\begin{table}[tb]
-  \centering
-  \caption{三种转换模式给出的不同保证。}
-  \label{tab:conversion-modes}
-  \begin{tabularx}{\textwidth}{@{}p{0.20\textwidth}p{0.31\textwidth}X@{}}
-    \toprule
-    模式 & 成功条件 & 适合本文何处 \\
-    \midrule
-    部分转换（partial conversion） & 被明确标为非法的操作均已合法化；未指定者可保留 & 中间阶段允许 \code{linalg}、\code{scf}、\code{vector} 与目标操作共存 \\
-    完全转换（full conversion） & 范围内每个操作均被目标接纳 & 越过可执行后端或序列化边界前，拒绝残留高层操作 \\
-    分析转换（analysis conversion） & 只判断可合法化性，不提交改写 & 诊断缺失模式、规划迁移，不把预测误报成产物 \\
-    \bottomrule
-  \end{tabularx}
-\end{table}
-
-“部分”绝不等于“类型随便混用”。已转换的生产者和未转换的消费者之间仍要满足 SSA 使用点的类型契约；框架插入源/目标物化（materialization），无法构造桥接就失败。\code{TypeConverter} 还能进行一对多类型转换（1:N type conversion）：一个排序 \code{memref} 在 LLVM ABI 边界可能展开为分配指针、对齐指针、偏移、各维大小与步长，而不是简单变成一个 \code{ptr}\cite{adv-mlir-conversion,adv-mlir-llvm-target}。临时的 \code{builtin.unrealized\_conversion\_cast} 只是在类型系统间架桥，没有独立执行语义，进入最终可执行边界前应被消解。
-
-由此可以更准确地描述“降低”：每一步先声明本步允许留下的世界，再证明或构造从非法项到合法项的路径。普通规范化可以夹在多个转换之间；模式也可串联，而不要求每个源操作有一条直达机器操作的规则。若截断比较暂时保留为 \code{arith}、归约先从 \code{linalg} 变成 \code{scf}、向量传输仍是 \code{vector}，这不是残缺的 IR，而是合法性集合有意容纳的混合状态。
-
-\subsection{缓冲化：从值等价到存储身份}
-
-张量值没有可观察的原地更新身份；\code{memref} 则具有基址、布局、地址空间、别名和生存期。把前者变成后者的缓冲化（bufferization）因此是语义边界，不是语法清理。One-Shot Bufferize 沿整个函数的 SSA 使用--定义链分析读写与冲突，尽量复用目标缓冲区；不能安全原地化时，代价会以分配和复制出现\cite{adv-mlir-bufferization}。这解释了为何上游通常建议先在张量形式做分块/融合，再较晚缓冲化：值语义更容易变换，而过早引入存储会把优化问题同别名及所有权纠缠在一起。
-
-对本文点积，两个输入只读，乘积与逐项截断可望融合，标量归约目的地携带累加状态。然而“可望”不是原地安全性的证明。未知张量操作若没有 \code{BufferizableOpInterface}，要么成为显式边界，要么使流程失败；函数边界缓冲化还受调用图等实现限制。缓冲化后必须回答：谁分配、谁释放、切片是否别名、循环携带值落在哪个缓冲区，以及复制是否进入热循环。所有权式释放流水线比已弃用的旧释放 Pass 更能显式表达这些义务\cite{adv-mlir-bufferization}。
-
-地址空间也在这里从注解变为可执行约束。通用 \code{memref} 允许目标定义内存空间；Ascend 的 HIVM 则区分全局内存 GM、统一缓冲区 UB，以及 L1、L0A/L0B/L0C 等片上层级。空间决定合法的数据搬运、容量、对齐和调度。官方内存规划文档还为特定硬件给出 UB/L1 的 32 字节以及 L0 系列的 512 字节对齐，并依据活跃区间复用片上地址\cite{adv-ascend-memory}。因此点积的分块大小不仅是“性能参数”：输入块和部分和必须能合法驻留，跨核合并、同步与累加精度也要落实。
-
-\subsection{LLVM 方言是一道明确边界，而非终点的别名}
-
-MLIR 的 \code{llvm} 方言是对应 LLVM IR 语义的\emph{MLIR 方言}，外部 LLVM IR 是另一种序列化与 API 世界。正确路线分两步：先把模块完全转换为可翻译的 LLVM/目标内在方言，再机械地翻译到 LLVM IR；实质优化应主要发生在前一步，而不是寄希望于翻译器理解任意高层操作\cite{adv-mlir-llvm-dialect,adv-mlir-llvm-target}。默认排序 \code{memref} 会成为描述符，函数实参可能按调用约定拆成多个标量；裸指针约定只在静态形状、默认布局等受限条件下成立。
-
-这道边界也帮助重新理解前文：LLVM IR 依然拥有丰富的 SSA、向量、目标内在函数和优化 Pass，绝非“只能表示汇编”；但它不提供 MLIR 那种由任意领域方言共同扩展的抽象层协议。二者是接力关系：MLIR 负责在领域和硬件选择尚未落定时保存结构，LLVM 接手已经具体化的控制、内存、ABI 与低层代码生成。
-
-\subsection{Ascend 官方 \code{VecAdd}：证据从 HIVM 才开始}
-
-AscendNPU IR 把 HFusion、HIVM 与 HACC 等方言建立在 MLIR 基础设施上。官方架构把 HFusion 描述为扩展 Linalg 的结构化操作层，用于保留命名语义、融合和面向硬件无关的处理；HIVM 进一步显式表示 NPU 的 tile 级计算、搬运、同步、核划分、片上内存与流水；HACC 描述异构调用和设备入口\cite{adv-ascend-architecture}。源树中可见 \code{TorchToHFusion}、\code{HFusionToHIVM} 等转换组件，这支持“存在更高层集成路径”，却不能证明任意程序已走通该路径\cite{adv-ascend-source}。
-
-最关键的证据校准是：官方快速入门的 \code{VecAdd} 输入\emph{已经是低层 HIVM/memref IR}，不是从 Torch、Linalg 或 HFusion 开始的端到端展示\cite{adv-ascend-vecadd}。它的外部参数为 GM 中的 \code{memref<16xi16>}，在 UB 分配三个临时区，用 \code{hivm.hir.load} 把两个输入搬入 UB，执行 \code{hivm.hir.vadd}，再以 \code{hivm.hir.store} 写回 GM；\code{hacc.entry} 与设备函数属性标识内核入口。\code{bishengir-compile add.mlir -enable-hivm-compile -o kernel.o} 产生的是供 CANN 主机程序注册、启动和同步的设备对象，不是独立主机可执行文件。
-
+对长度 $k$ 的截断点积，可把核心计算写成
 \begin{equation}
-  \mathrm{GM}(A),\mathrm{GM}(B)
-  \xrightarrow{\texttt{hir.load}}
-  \mathrm{UB}(A),\mathrm{UB}(B)
-  \xrightarrow{\texttt{hir.vadd}}
-  \mathrm{UB}(C)
-  \xrightarrow{\texttt{hir.store}}
-  \mathrm{GM}(C).
-  \label{eq:vecadd-flow}
+  p_i=a_i b_i,\qquad
+  c_i=\min(12,\max(-8,p_i)),\qquad
+  r=\sum_{i=0}^{k-1}c_i .
+  \label{eq:mlir-map-reduce}
 \end{equation}
+前两个式子是同一索引空间上的结构化映射，最后一个式子是以 $0$ 为初值的加法规约。这一描述保存了索引映射、归约维和逐元素区域，因此融合、分块和向量化不必先做循环识别。边界 $0\le k\le8$ 与 $-8\le c_i\le12$ 又给出 $-64\le r\le96$，所以这里把归约重排为加法树不会引入有符号溢出；若删除长度上界，这项工程自由便随之消失。形式化不变量在此不是装饰，而是优化许可。
 
-式~\eqref{eq:vecadd-flow} 直接展示了存储层级与搬运，但没有展示 HFusion 到 HIVM 的降低，也没有验证动态形状、归约、自动融合或性能可移植性。官方宿主示例完成 ACL 初始化、设备内存分配与拷贝、二进制/函数注册、流上启动、同步、回拷和 16 个结果比较；这是一个功能冒烟测试而非基准。若要把“逐步降低”升级为观察结果，应使用官方提供的 Pass 前后 IR 打印选项和 \code{bishengir-opt}，固定工具版本并保存每一道快照\cite{adv-ascend-faq}。
+仅有许多方言并不足以形成系统。接口（interface）让通用变换询问一个操作“拥有什么能力”，而不是枚举它“属于哪个名字”。例如，结构化操作接口暴露迭代器和索引映射，目的地风格接口显式给出输出或初值，内存效果接口说明读写行为，缓冲化接口描述别名和存储改写\cite{adv-mlir-interfaces,adv-mlir-linalg-rationale}。因此，新的领域操作可以接入已有的分块或缓冲化算法；反过来，若一个操作没有声明相应契约，通用算法就不应仅凭外形猜测其语义。这是可扩展性与可推理性之间最重要的平衡。
 
-\subsection{未执行展望：截断点积的渐进映射}
+\subsection{降低是一个合法性问题}
 
-下面只提出可证伪的设计，不声称本项目运行过该管线。把输入长度限制为
-$k=\min\{8,\max\{0,n\}\}$，则数学核心为
+模式改写（pattern rewriting）给出局部等价替换；方言转换（dialect conversion）进一步规定整个转换结束时允许留下什么。令模块中的操作集合为 $O$，转换目标给出合法性谓词（legality predicate）
 \begin{equation}
- r=\sum_{i=0}^{k-1}\operatorname{clip}(a_i b_i,-8,12),
- \qquad 0\le k\le 8 .
+  L_t(o,\Gamma)\in\{\mathsf{true},\mathsf{false}\},
+  \qquad
+  \operatorname{Legal}_t(M)\iff
+  \forall o\in O(M),\ L_t(o,\Gamma_M),
+  \label{eq:mlir-legality}
 \end{equation}
-每一项都落在 $[-8,12]$，故总和落在 $[-64,96]$，保证有符号 32 位加法不溢出；截断发生在每个乘积之后而不是累加器每次更新之后，所以外层仍是普通加法归约。这项源级不变量是并行/向量归约的法律依据，而不是后端猜测。
+其中 $t$ 是本次转换目标，$\Gamma_M$ 包含类型、属性和所在区域等上下文。静态合法性只依赖操作种类；动态合法性还可要求函数签名已经转换、布局满足限制或某个属性已经确定。部分转换只要求被声明为非法的操作消失，完全转换则要求范围内每个操作都被目标接纳\cite{adv-mlir-conversion}。于是“中间模块同时含有 \code{linalg}、\code{scf} 和 \code{vector}”并不表示流水线只做了一半；只要式~\eqref{eq:mlir-legality} 对当前目标成立，它就是刻意选择的稳定交接面。
 
-\begin{table}[tb]
-  \centering
-  \caption{截断点积的拟议多层路线（全部为未执行展望）。}
-  \label{tab:proposed-ascend-dot}
-  \begin{tabularx}{\textwidth}{@{}p{0.18\textwidth}p{0.34\textwidth}X@{}}
-    \toprule
-    层次 & 保留或新引入的事实 & 必须验证后才能升级的主张 \\
-    \midrule
-    \code{tensor/linalg} & 形状、逐项乘法与截断、单一归约维、目的地初值 & 实际 IR 能表示受限动态前缀；截断被融合且有符号语义一致 \\
-    \code{scf/vector} & 分块循环、尾块条件、虚拟 SIMD、局部归约 & 向量形状被目标支持；$k=0$ 与尾块正确；无非法重结合 \\
-    HFusion（候选支路） & 命名结构、融合与目标调度意图 & 具体版本存在覆盖这些操作的合法转换；不是由 \code{VecAdd} 推断而来 \\
-    HIVM/\code{memref} & GM/UB 等存储、搬运、核/管线、同步与分配 & UB 容量/对齐满足；部分和策略、跨核合并与数据竞争已解决 \\
-    \code{llvm}/设备对象 & 具体 ABI、描述符/指针、内在函数和二进制边界 & 完全合法化、无悬空转换 cast；CANN 宿主按真实 ABI 启动并比对输出 \\
-    \bottomrule
-  \end{tabularx}
-\end{table}
+这种设计把一个难以维护的全局转换拆成可组合的责任：规则只需把自己承诺处理的非法操作改写为更接近目标的形式，框架负责反复应用规则并检查终态。代价也很现实。合法集合定义得过宽，错误会被推迟到更难诊断的阶段；定义得过窄，则每个实验性操作都必须立刻获得完整后端支持。好的转换边界不是“越低越严谨”，而是在当前决策所需的信息与下一阶段可接受的复杂度之间取平衡。
 
-这条路线不是唯一线性链：规则循环可走 \code{linalg}\(\rightarrow\)\code{affine/scf}，向量操作可在循环形成前后出现；Ascend 支路可能从 HFusion 进入 HIVM，而不适用的主机清理代码可直接走 LLVM。真正的阶段定义应是“哪些操作在此转换目标下已非法”，而不是一张宣传式方言列表。
+\subsection{类型转换需要跨边界的物化}
 
-验证该展望至少需要：（1）固定 AscendNPU IR、LLVM、CANN 与设备版本；（2）保存 tensor/Linalg、HFusion（若实际经过）、HIVM、高/低层边界和最终对象的原始 IR；（3）逐边界记录消失与新增的操作、类型、布局和地址空间；（4）在 $n=0,1,4,8,10$ 等同一语义样例上与 CPU 参考实现逐项比较；（5）把编译、搬运、冷启动和稳态内核时间分开。任一转换不支持动态前缀、产生超范围访问、改变有符号限幅、或需要文档未说明的 ABI，即证伪当前映射，而不是由作者补上一句“理论上可行”。
+操作合法化不能脱离类型转换（type conversion）。\code{TypeConverter} 可以把一个源类型映射为零个、一个或多个目标类型；例如，排序 \code{memref} 在 LLVM ABI 边界常展开为分配指针、对齐指针、偏移、各维大小与步长，而不是简单改名为一个 \code{ptr}\cite{adv-mlir-conversion,adv-mlir-llvm-target}。若生产者已转换而消费者仍停留在源方言，两者的 SSA 类型便不再相同。源物化、目标物化与参数物化（materialization）在这个断面构造桥接值，使局部转换仍能保持整个使用--定义链类型正确。
 
-因此，本节能确立的结论较窄但扎实：MLIR 把多层语义共存、接口复用与合法性驱动转换变成了工程机制；Ascend 官方材料确实展示了 HIVM 层的地址空间和向量搬运计算；而本文点积从结构化张量到 Ascend 设备的整条路，仍是有明确验收条件的研究展望。
+临时的 \code{builtin.unrealized\_conversion\_cast} 可用于推迟桥接细节，但它没有独立的机器语义。允许它永久流入代码生成，相当于把尚未解决的类型义务伪装成普通操作。工程上应把这类 cast 看作“语义债务”：混合 IR 内可以短暂存在，越过最终翻译或 ABI 边界前必须被真正的物化规则消除。这也说明渐进式降低并非放弃严格性；它只是把严格性表述为每个边界各自可检查的合同。
+
+\subsection{缓冲化改变了程序讨论的问题}
+
+张量值回答“这个计算产生什么值”，缓冲区还要回答“该值存在哪里、与谁别名、由谁释放”。缓冲化（bufferization）因此不是换一种类型拼写，而是从值等价进入存储身份。One-Shot Bufferize 沿 SSA 使用--定义链分析读写冲突，尽量将目的地风格操作原地化；当原地更新可能改变仍可观察的旧值时，就必须分配或复制\cite{adv-mlir-bufferization}。
+
+在式~\eqref{eq:mlir-map-reduce} 中，$p_i$ 与 $c_i$ 没有必要物化为完整数组：映射可以同归约融合，每次生成一个 $c_i$ 后立即累加。保持张量和结构化操作直到完成融合，使这个结论直接可见。若过早缓冲化，中间数组的分配、别名与生存期会进入分析，编译器随后还要证明它们可以被删掉。反之，过晚缓冲化也会掩盖片上容量、地址空间和数据搬运等硬约束。最佳位置不是固定的“尽可能晚”，而是：先完成依赖值语义的结构变换，再在存储决策开始影响合法性与成本之前显式化内存。
+
+这就是信息寿命（information lifetime）的工程权衡。高层信息保留越久，通用融合和调度的选择越多；但抽象层越多，接口、规范化规则和转换路径的维护面也越大。低层细节暴露越早，后端越容易落实 ABI 与硬件约束；但许多结构一旦粉碎，就只能通过不可靠的模式识别重建。多层 IR 的价值不在“层数多”，而在让每类事实恰好活到最后一个需要它的决策点。
+
+\subsection{从 MLIR 到 LLVM，再到特定设备}
+
+MLIR 的 \code{llvm} 方言是对应 LLVM IR 语义的一种 MLIR 方言，并不等同于外部 LLVM IR 文件。通常先把模块完全合法化为可翻译的 LLVM 及目标内在方言，再机械地翻译为 LLVM IR；排序 \code{memref} 在这里落实为描述符，调用约定和地址空间也必须具体化\cite{adv-mlir-llvm-dialect,adv-mlir-llvm-target}。两套表示不是竞争关系：MLIR 在领域结构和硬件选择尚未确定时保存信息，LLVM 在这些选择已经具体化后承担成熟的低层优化与代码生成。
+
+异构设备使这条原则更鲜明。AscendNPU IR 在 MLIR 上定义 HFusion、HIVM 与 HACC 等方言：前者面向结构化融合，HIVM 描述 tile、搬运、同步与片上存储，HACC 连接宿主和设备入口\cite{adv-ascend-architecture,adv-ascend-source}。但官方 \code{VecAdd} 示例的起点已经是 HIVM/\code{memref} 层：两个 GM 输入经 \code{hivm.hir.load} 搬入 UB，执行 \code{hivm.hir.vadd}，再由 \code{hivm.hir.store} 写回 GM\cite{adv-ascend-vecadd}。它具体说明了设备边界上的地址空间与数据运动，却不代表任意 \code{linalg} 程序都能自动穿过 HFusion 到达该层。
+
+对截断点积，一个自然的设计是让映射、限幅和归约先保持为结构化操作；随后依据目标向量宽度与 UB 容量形成 tile，将 GM--UB 搬运、局部归约和尾部条件显式化；最后才落实设备入口与宿主调用。这里最难的并非把乘法翻译成某条指令，而是决定部分和放在哪里、怎样合并，以及搬运和同步是否抵消并行收益。官方 \code{VecAdd} 恰好标出一条诚实的知识边界：它展示“低层设备程序怎样写”，没有替我们完成“高层归约怎样调度”。
+
+因此，多层 IR 给出的不是自动优化承诺，而是一种组织决策的办法：结构仍有用时不急于丢弃；存储开始支配可行性时显式缓冲化；越过 ABI 或设备边界前，用合法性谓词消除所有未兑现的抽象。编译器由此不再是一串按名称排列的 Pass，而是一系列有意识的信息降解。
