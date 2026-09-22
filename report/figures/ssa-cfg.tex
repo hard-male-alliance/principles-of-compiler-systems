@@ -1,14 +1,16 @@
 % CFG and SSA value flow / 控制流图与 SSA 值流
 \begin{figure}[htbp]
   \centering
-  \begin{tikzpicture}[x=1cm,y=1cm]
+  \begin{tikzpicture}[x=.94cm,y=1cm]
     \node[vis/artifact,minimum width=2.7cm] (entry) at (0,1.55)
       {\texttt{entry}\quad $i_0=0,\ acc_0=0$};
-    \node[vis/semantic node,minimum width=3.75cm] (loop) at (0,0)
-      {\texttt{loop}\quad $i=\phi(0,i')$\\$acc=\phi(0,acc')$\quad $i<k$?};
-    \node[vis/artifact,text width=3.55cm] (body) at (-1.15,-1.85)
+    \node[vis/semantic node,text width=4.35cm] (loop) at (0,0)
+      {\texttt{loop}\quad $i=\phi(0,i')$\\
+       $acc=\phi(0,acc')$\quad $i<k$?\\
+       $I(i):\ acc=\sum_{j<i}c_j\ \wedge\ 0\le i\le k$};
+    \node[vis/artifact,text width=3.55cm] (body) at (-1.15,-2.35)
       {\texttt{body}\quad load--multiply--clip\\$i'=i+1,\quad acc'=acc+term$};
-    \node[vis/artifact,minimum width=2.25cm] (exit) at (1.9,-1.85)
+    \node[vis/artifact,minimum width=2.25cm] (exit) at (1.9,-2.35)
       {\texttt{exit}\\return $acc$};
 
     \draw[vis/edge] (entry) -- node[vis/label,right]{初值} (loop);

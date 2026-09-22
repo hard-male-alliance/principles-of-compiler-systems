@@ -1,0 +1,90 @@
+% Backend constraint stack / 后端约束栈
+\begin{figure}[htbp]
+  \centering
+  \begin{tikzpicture}[x=.98cm,y=1cm]
+    % Panel (a): IR dependence DAG.
+    \node[vis/label,font=\bfseries\footnotesize] at (-2.75,2.95)
+      {(a) IR 与依赖 DAG};
+    \node[vis/artifact] (la) at (-4.05,2.25) {load $a_i$};
+    \node[vis/artifact] (lb) at (-1.45,2.25) {load $b_i$};
+    \node[vis/semantic node] (mul) at (-2.75,1.38) {$p=a_i b_i$};
+    \node[vis/decision] (clip) at (-2.75,.50) {$c=\operatorname{clip}(p)$};
+    \node[vis/semantic node] (sum) at (-2.75,-.38) {$acc'=acc+c$};
+    \draw[vis/edge] (la) -- (mul);
+    \draw[vis/edge] (lb) -- (mul);
+    \draw[vis/edge] (mul) -- (clip);
+    \draw[vis/semantic edge] (clip) -- (sum);
+    \draw[vis/semantic edge] (-4.15,-.38) -- node[vis/label,above] {$acc$} (sum);
+    \begin{scope}[on background layer]
+      \node[vis/group,fit=(la)(lb)(sum),inner sep=5pt] (pa) {};
+    \end{scope}
+
+    % Panel (b): selected target operations.
+    \node[vis/label,font=\bfseries\footnotesize] at (2.75,2.95)
+      {(b) RV64 指令选择};
+    \node[vis/artifact,text width=1.55cm] (lw0) at (1.55,2.20)
+      {\texttt{lw} $v_0$};
+    \node[vis/artifact,text width=1.55cm] (lw1) at (3.95,2.20)
+      {\texttt{lw} $v_1$};
+    \node[vis/semantic node,text width=2.0cm] (mulw) at (2.75,1.35)
+      {\texttt{mulw} $v_2$};
+    \node[vis/decision,text width=3.2cm] (guards) at (2.75,.42)
+      {比较/分支与常量搬移\\实现 $[-8,12]$ 截断};
+    \node[vis/semantic node,text width=2.0cm] (addw) at (2.75,-.48)
+      {\texttt{addw} $v_{acc}$};
+    \draw[vis/edge] (lw0) -- (mulw);
+    \draw[vis/edge] (lw1) -- (mulw);
+    \draw[vis/edge] (mulw) -- (guards);
+    \draw[vis/semantic edge] (guards) -- (addw);
+    \begin{scope}[on background layer]
+      \node[vis/group,fit=(lw0)(lw1)(addw),inner sep=5pt] (pb) {};
+    \end{scope}
+    \draw[vis/edge] (pa.east) -- node[vis/label,above]{覆盖并匹配} (pb.west);
+
+    % Panel (c): schedule and live ranges.
+    \node[vis/label,font=\bfseries\footnotesize] at (-2.75,-1.45)
+      {(c) 调度次序与活跃区间};
+    \foreach \x/\n/\op in {-4.55/1/lw a,-3.65/2/lw b,-2.75/3/mulw,-1.85/4/clip,-.95/5/addw}
+      \node[vis/artifact,minimum width=.78cm,inner sep=2pt] (s\n) at (\x,-2.10)
+        {\shortstack{\n\\\texttt{\op}}};
+    \foreach \u/\v in {s1/s2,s2/s3,s3/s4,s4/s5}
+      \draw[vis/edge] (\u) -- (\v);
+    \draw[black!65,line width=.9pt] (-4.52,-2.82) -- (-2.75,-2.82)
+      node[left,vis/label] {$v_0$};
+    \draw[black!65,line width=.9pt,dashed] (-3.62,-3.16) -- (-2.75,-3.16)
+      node[left,vis/label] {$v_1$};
+    \draw[semblue,line width=1.2pt] (-2.72,-3.50) -- (-.98,-3.50)
+      node[left,vis/label,text=semblue] {$v_2$};
+    \draw[semblue,line width=1.2pt] (-4.52,-3.84) -- (-.98,-3.84)
+      node[left,vis/label,text=semblue] {$acc$};
+    \node[vis/note,anchor=north,text width=4.6cm] at (-2.75,-4.04)
+      {先满足依赖，再在延迟、吞吐量和寄存器压力之间选择次序。};
+    \begin{scope}[on background layer]
+      \node[vis/group,fit=(s1)(s5),inner xsep=5pt,inner ysep=24pt] (pc) {};
+    \end{scope}
+
+    % Panel (d): one legal allocation under the ABI.
+    \node[vis/label,font=\bfseries\footnotesize] at (2.75,-1.45)
+      {(d) 物理资源与 ABI};
+    \node[vis/artifact,text width=2.05cm] (scratch) at (1.45,-2.10)
+      {入口实参\\$a0$--$a4$};
+    \node[vis/semantic node,text width=2.05cm] (accreg) at (4.02,-2.10)
+      {$v_{acc}\mapsto t0$\\叶函数内保持};
+    \node[vis/artifact,text width=2.05cm] (arg) at (4.02,-3.22)
+      {$a0\leftarrow t0$\\函数返回};
+    \node[vis/artifact,text width=2.05cm] (frame) at (1.45,-3.22)
+      {\texttt{main} 栈帧\\跨调用保存 $ra$};
+    \draw[vis/edge] (scratch) -- (accreg);
+    \draw[vis/semantic edge] (accreg) -- (arg);
+    \draw[vis/deferred edge] (frame) -- (scratch);
+    \node[vis/note,anchor=north,text width=4.8cm] at (2.75,-4.02)
+      {案例分配：叶函数无需帧；返回值进入 $a0$，而调用运行时的 \texttt{main} 单独保存 $ra$。};
+    \begin{scope}[on background layer]
+      \node[vis/group,fit=(scratch)(accreg)(arg)(frame),inner xsep=6pt,
+        inner ysep=18pt] (pd) {};
+    \end{scope}
+    \draw[vis/edge] (pc.east) -- (pd.west);
+  \end{tikzpicture}
+  \caption{后端不是四个彼此独立的阶段：同一组载入、乘法、截断与累加先受数据依赖约束，再被目标指令覆盖；调度改变活跃区间，寄存器分配与 ABI 又把局部选择变成跨调用必须履行的契约。}
+  \label{fig:backend-constraints}
+\end{figure}

@@ -17,9 +17,9 @@
 
     \node[vis/artifact,text width=4.85cm,anchor=north west] (deriv) at (.85,1.15) {
       \centering
-      $\Gamma(a)=\texttt{int}[8]\qquad \Gamma(i)=\texttt{int}$\\[3pt]
+      $\Gamma(a)=\texttt{int}^*\qquad \Gamma(i)=\texttt{int}$\\[3pt]
       $\displaystyle
-       \frac{\Gamma\vdash a\leadsto \texttt{int}^*\quad
+       \frac{\Gamma\vdash a:\texttt{int}^*\quad
              \Gamma\vdash i:\texttt{int}}
             {\Gamma\vdash a[i]:\texttt{int}\ \text{lvalue}}$\\[5pt]
       $\displaystyle
