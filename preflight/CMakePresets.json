@@ -1,0 +1,55 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "ci",
+      "displayName": "Portable-or-full compiler preflight",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/../.temp/preflight-ci",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "PREFLIGHT_RISCV": "AUTO"
+      }
+    },
+    {
+      "name": "rv64",
+      "displayName": "Required full Linux RV64GC validation",
+      "inherits": "ci",
+      "binaryDir": "${sourceDir}/../.temp/preflight-rv64",
+      "cacheVariables": {
+        "PREFLIGHT_RISCV": "ON"
+      }
+    },
+    {
+      "name": "portable",
+      "displayName": "Portable observation capture only",
+      "inherits": "ci",
+      "binaryDir": "${sourceDir}/../.temp/preflight-portable",
+      "cacheVariables": {
+        "PREFLIGHT_RISCV": "OFF"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "ci", "configurePreset": "ci" },
+    { "name": "rv64", "configurePreset": "rv64" },
+    { "name": "portable", "configurePreset": "portable" }
+  ],
+  "testPresets": [
+    {
+      "name": "ci",
+      "configurePreset": "ci",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "rv64",
+      "configurePreset": "rv64",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "portable",
+      "configurePreset": "portable",
+      "output": { "outputOnFailure": true }
+    }
+  ]
+}
