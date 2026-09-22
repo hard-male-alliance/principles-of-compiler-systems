@@ -49,14 +49,14 @@
         {\shortstack{\n\\\texttt{\op}}};
     \foreach \u/\v in {s1/s2,s2/s3,s3/s4,s4/s5}
       \draw[vis/edge] (\u) -- (\v);
-    \draw[black!65,line width=.9pt] (-4.52,-2.82) -- (-2.75,-2.82)
-      node[left,vis/label] {$v_0$};
-    \draw[black!65,line width=.9pt,dashed] (-3.62,-3.16) -- (-2.75,-3.16)
-      node[left,vis/label] {$v_1$};
-    \draw[semblue,line width=1.2pt] (-2.72,-3.50) -- (-.98,-3.50)
-      node[left,vis/label,text=semblue] {$v_2$};
-    \draw[semblue,line width=1.2pt] (-4.52,-3.84) -- (-.98,-3.84)
-      node[left,vis/label,text=semblue] {$acc$};
+    \node[vis/label,anchor=east,fill=white,inner sep=1pt] at (-4.62,-2.82) {$v_0$};
+    \node[vis/label,anchor=east,fill=white,inner sep=1pt] at (-4.62,-3.16) {$v_1$};
+    \node[vis/label,anchor=east,fill=white,inner sep=1pt,text=semblue] at (-4.62,-3.50) {$v_2$};
+    \node[vis/label,anchor=east,fill=white,inner sep=1pt,text=semblue] at (-4.62,-3.84) {$acc$};
+    \draw[black!65,line width=.9pt] (-4.42,-2.82) -- (-2.75,-2.82);
+    \draw[black!65,line width=.9pt,dashed] (-3.62,-3.16) -- (-2.75,-3.16);
+    \draw[semblue,line width=1.2pt] (-2.72,-3.50) -- (-.98,-3.50);
+    \draw[semblue,line width=1.2pt] (-4.42,-3.84) -- (-.98,-3.84);
     \node[vis/note,anchor=north,text width=4.6cm] at (-2.75,-4.04)
       {先满足依赖，再在延迟、吞吐量和寄存器压力之间选择次序。};
     \begin{scope}[on background layer]

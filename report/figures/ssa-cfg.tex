@@ -32,7 +32,9 @@
        $acc$：跨回边值 $\Rightarrow$ \texttt{addw}};
     \node[vis/note,text width=3.65cm,below=4mm of corr] (why)
       {黑色实线决定下一基本块；蓝色粗线只追踪回边携带的值。$\phi$ 的选择取决于实际到达的前驱边。};
-    \draw[vis/deferred edge] (cfg.east) -- node[vis/label,above]{降低时对应} (corr.west);
+    \draw[vis/deferred edge] ([yshift=-1mm]cfg.north east)
+      to[out=20,in=165] node[pos=.52,vis/label,above]{降低时对应}
+      (corr.north west);
   \end{tikzpicture}
   \caption{循环同时是一张控制流图和一组跨回边的数据依赖：$\phi$ 节点表达“来自哪条前驱边的值”，而后端可以把索引归纳改写为指针递增，只要这些依赖保持不变。}
   \label{fig:ssa-cfg}
