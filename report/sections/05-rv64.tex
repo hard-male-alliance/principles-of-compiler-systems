@@ -25,7 +25,7 @@ factorial:
 
 \subsection{RV64 psABI：独立编译仍能相互调用}
 
-LP64D 调用约定规定整数参数和返回值优先使用 \code{a0--a7}；\code{ra} 保存返回地址；\code{sp} 是栈指针并须在过程调用边界满足对齐；\code{t0--t6} 为调用者保存临时寄存器；\code{s0--s11} 为被调用者保存\cite{riscv-psabi-1.0}。因此 \code{factorial} 从 \code{a0} 读入 $n$，在 \code{t0}/\code{t1} 中维护循环状态，再把结果移回 \code{a0}。
+LP64D 调用约定以 \code{a0--a7} 传递整数参数，以 \code{a0}/\code{a1} 承载至多两个寄存器返回值；本例的单个 \code{int} 返回值只使用 \code{a0}。\code{ra} 保存返回地址；\code{sp} 是栈指针并须在过程执行期间保持 16 字节对齐；\code{t0--t6} 为调用者保存临时寄存器；\code{s0--s11} 为被调用者保存\cite{riscv-psabi-1.0}。因此 \code{factorial} 从 \code{a0} 读入 $n$，在 \code{t0}/\code{t1} 中维护循环状态，再把结果移回 \code{a0}。
 
 叶函数 \code{factorial} 不调用别的函数，可直接 \code{ret}；\code{main} 连续调用五个函数，必须保护自己的返回地址。作者汇编把栈指针减 16，在 \code{8(sp)} 保存 \code{ra}，返回前逆向恢复。这 16 字节而非任意大小来自调用边界的栈对齐约束。它也说明“有局部变量”不必然意味着“有栈槽”：这里寄存器足以承载局部状态，栈帧的主要任务是保存返回地址。
 

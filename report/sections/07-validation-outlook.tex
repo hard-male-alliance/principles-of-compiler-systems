@@ -38,4 +38,6 @@ LLVM IR 适合显式控制流、内存与机器式标量操作，但领域操作
 \fbox{\code{scf} 结构化循环 $\rightarrow$ \code{cf} 块/分支 $\rightarrow$ LLVM 方言 $\rightarrow$ LLVM IR $\rightarrow$ RV64}
 \end{center}
 
+课程进阶材料点名的 AscendNPU IR VecAdd 展示了同一思想在加速器上的形态：官方 HIVM 示例把设备入口、全局内存（\code{gm}）到统一缓冲区（\code{ub}）的搬运、\code{hivm.hir.vadd} 以及写回保持为显式操作；架构说明再把 HFusion、HIVM、低层 MLIR 与 LLVM IR/算子二进制组织成逐级降低关系\cite{ascend-vecadd-2026,ascend-architecture-2026}。本文没有执行 CANN/BiSheng 专用编译器或 NPU 真机，因此这只是文档支撑的设计展望，不是本阶乘实例已经经过的阶段，也不是设备性能实验。
+
 其价值是\emph{表示时机}：在最后一个需要高层结构的变换完成后再降低。代价同样真实：每条方言边界都需要合法性规则、重写、类型桥接、诊断和版本维护；方言也不会自动组合，保留结构更不保证程序更快。因此，MLIR 更适合确有多个领域或硬件层级、而 LLVM IR 会过早抹平关键信息的系统，不应仅因“层次更多”就用于小型标量编译器。

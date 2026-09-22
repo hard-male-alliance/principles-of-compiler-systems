@@ -5,7 +5,7 @@
 
 本例的具体链路是作者书写的 \code{bounded\_factorial\_rv64gc.s} 到 \code{asm.rv64.o}。汇编器输入指令、标签和 \code{.text}/\code{.globl}/\code{.type} 等指示符，输出 ELF 可重定位对象（relocatable object）。指令已成为字节；同一节内的局部标签距离通常可立即求出，跨对象函数地址则仍未知。对象用节保存同类内容，用符号表描述定义与未定义名字，并用重定位项描述“链接时应如何修补某处”\cite{elf-gabi-2025,riscv-psabi-1.0}。
 
-以 \code{main} 中 \code{call getint} 为例，汇编文本表达调用意图；对象中的符号表把 \code{main} 标为已定义全局函数、把 \code{getint} 标为未定义；重定位把调用位置、目标符号、类型和加数关联起来。RISC-V 的调用序列可涉及 \code{R\_RISCV\_CALL\_PLT}，并常伴允许链接器松弛（linker relaxation）的标记。这里“未定义”不是错误，而是可重定位对象的正常开放义务。
+以 \code{main} 中 \code{call getint} 为例，汇编文本表达调用意图；对象中的符号表把 \code{main} 标为已定义全局函数、把 \code{getint} 标为未定义；重定位把调用位置、目标符号、类型和加数关联起来。本次 \code{asm.rv64.o} 在 \code{.text+0x2a} 实际同时出现 \code{R\_RISCV\_CALL\_PLT getint} 与 \code{R\_RISCV\_RELAX}：前者要求链接器解析调用目标，后者授权在最终距离已知后缩短序列。这里“未定义”不是错误，而是可重定位对象的正常开放义务。
 
 \begin{figure}[tb]
 \centering
@@ -50,6 +50,8 @@ SysY 源 & 2,744 & 627,032\\
 
 Linux 的 \code{execve} 用新程序映像替换当前进程。ELF 程序头表中的 \code{PT\_LOAD} 项给出文件范围、虚拟地址、内存大小、对齐与权限；若 \code{p\_memsz>p\_filesz}，尾部在内存中补零，这是未初始化数据的常见实现机制\cite{linux-elf-2026,linux-execve-2026}。内核准备初始栈与机器状态，然后把控制权交给 ELF 入口 \code{\_start}。
 
+上一段描述的是目标机原生 Linux 的加载契约。本实验实际通过 QEMU 用户态模拟器（user-mode emulator）运行 RV64 文件：宿主先启动 \code{qemu-riscv64}，由它按来宾 ELF 建立来宾可见地址空间、翻译 RV64 指令，并把来宾系统调用转交宿主内核\cite{qemu-user-2026}。因此结果验证的是 RV64 Linux 用户态程序的可观察行为，不是 RISC-V 实机启动过程，更不能提供微架构性能证据。
+
 \begin{figure}[tb]
 \centering
 \begin{tabular}{@{}llcl@{}}
@@ -66,4 +68,3 @@ Linux 的 \code{execve} 用新程序映像替换当前进程。ELF 程序头表�
 \end{figure}
 
 节（section）与段（segment）可以覆盖同一批字节，却服务不同消费者。最终进程中不需要宏名、WhileStmt 或 SSA 名称；行为被保存为映射的指令/数据、ABI 建立的机器状态以及已经兑现的地址关系。这是整条链上最后一次视角转换。
-
