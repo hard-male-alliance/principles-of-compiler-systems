@@ -1,16 +1,23 @@
-\section{引言}
-\label{sec:introduction}
+\section{引言：不要把编译器看成黑箱}
+\label{sec:intro}
 
-把源文件称为“经过编译器变成可执行文件”会掩盖三个不同层次的问题：语言前端如何判定程序有意义，中间表示如何在保持语义的同时改变形态，以及目标文件如何借助应用二进制接口（Application Binary Interface, ABI）与运行时组成进程映像。Clang 本身是协调预处理、编译、汇编与链接的驱动程序；这些逻辑阶段可以融合执行，因而只有保存阶段产物才能辨认其契约\cite{clangToolchain,clangCommand}。LLVM 以类型化操作和静态单赋值（Static Single Assignment, SSA）连接语言前端与多种目标后端\cite{lattner2004llvm}，而 RISC-V ELF psABI 进一步约束寄存器、栈、重定位和链接行为\cite{riscvPsabi}。
+源文件并不直接“变成”可执行文件。驱动程序（compiler driver）协调预处理器、编译器前端与后端、汇编器和链接器；操作系统加载器随后依据可执行文件中的映射说明创建进程。Clang 官方文档把这些逻辑阶段区分开来，也提醒我们一次驱动命令可以在内部融合多个阶段\cite{clang-toolchain-2026,clang-command-2026}。因此，保存下来的 \code{.i}、\code{.ll}、\code{.s} 和 \code{.o} 是观察点，而不是“每阶段必由独立进程执行”的证据。
 
-本文回答三个问题：第一，同一个 SysY 程序中的数组、循环、递归和短路求值，如何依次出现在预处理文本、抽象语法树（Abstract Syntax Tree, AST）、LLVM IR 和 RV64 汇编中？第二，手写 IR 与汇编在何种 ABI 和运行时条件下，才可被称为与源码等价？第三，MLIR 的多级抽象对专用加速器程序有何表达价值，在缺少 CANN、BiSheng 工具链和 NPU 时又能支持多强的结论？
+本文不用工具清单解释这条链，而是沿同一事实提问：输入的表示是什么？该阶段做了什么？输出增加了哪些事实？在实例中留下了什么痕迹？还有什么被推迟？我们称这些生产者与消费者之间可检查的约定为\textbf{表示契约}（representation contract）。它避免两种误解：其一，把优化后的文本差异直接当成语义差异；其二，把指令集、调用约定、对象格式和加载协议混成一个“后端”。
 
-本文的主要贡献如下：
-\begin{enumerate}
-  \item 建立带明确输入域和五个夹具的语义中心；在本机与 RV64 交叉环境验证不同表示；
-  \item 从数据结构而非命令清单出发，对照 AST、SSA 控制流、RV64 调用约定及 ELF 链接边界；
-  \item 审计课程运行时二进制与头文件，定位预编译库的 \texttt{\_impure\_ptr} 依赖和头文件全局量多重定义，并以同工具链重建运行时消除偶然兼容；
-  \item 将 AscendNPU IR VecAdd 限定为静态结构研究，明确区分结构存在、方言编译与设备运行三种证据强度。
-\end{enumerate}
+图~\ref{fig:river} 给出全文路线。编译并非单调地从“信息丰富”走向“信息贫乏”：抽象语法树（Abstract Syntax Tree, AST）丢掉空白和宏拼写，却增加名字绑定与类型；静态单赋值形式（Static Single Assignment, SSA）丢掉变量反复赋值的表象，却增加清晰的数据依赖；对象文件不知道最终地址，却增加可由链接器兑现的重定位义务；最终文件再增加加载段和入口地址。
 
-全文采用“观测—解释—边界”的叙述纪律：测试输出、工具版本和结构检查是观测；基于规范的机制说明是解释；未执行的专用工具链不写成实验结果。
+\begin{figure}[tb]
+\centering
+\fbox{\begin{minipage}{0.94\linewidth}\small\centering
+SysY/C 源文本 $\rightarrow$ 预处理记号流 $\rightarrow$ 带类型 AST\\
+$\downarrow$\quad 前端保留语言意义，放弃排版与部分表面语法\quad$\downarrow$\\
+LLVM IR（\code{-O0}/\code{-O2}）$\rightarrow$ RV64 汇编 $\rightarrow$ ELF 可重定位对象\\
+$\downarrow$\quad 符号解析、重定位与布局\quad$\downarrow$\\
+静态 ELF 可执行文件 $\rightarrow$ 映射的进程映像 $\rightarrow$ 可观察输出
+\end{minipage}}
+\caption{表示之河：箭头是契约边界，不暗示每一步均由独立进程运行。}
+\label{fig:river}
+\end{figure}
+
+本文的贡献是教学性的纵向解释，而非提出新算法：第一，用一个足够小、又包含函数、分支、循环和外部调用的程序保持跨层追踪；第二，把每层“保留、显式化、编码、丢弃”的信息并列说明；第三，以实物计数和六个输入约束叙述，但不把结构计数包装成性能结论。LLVM 的经典设计表明，统一的类型化 SSA 表示能够连接分析、变换与多目标代码生成\cite{lattner-adve-llvm-2004}；本文关注的正是这种连接如何在一个具体程序中可见。

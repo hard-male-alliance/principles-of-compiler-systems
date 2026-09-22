@@ -1,0 +1,56 @@
+\section{一个程序，一条语义线索}
+\label{sec:case}
+
+\subsection{语义契约与选择理由}
+
+清单~\ref{lst:sysy} 是贯穿全文的 SysY 源。它读取整数 $n$，令
+\[
+b=\min(10,\max(0,n)),\qquad f(b)=\prod_{k=2}^{b}k,
+\]
+然后输出十进制的 $f(b)$、一个换行，并以状态 0 返回。故负输入输出 1，而不是 0；这是“先夹到 0，再计算 $0!=1$”的直接结果。上界 10 使结果不超过 3,628,800，落在 32 位有符号整数内，避免本例的乘法进入溢出语义争议。
+
+\begin{lstlisting}[language=C,caption={有界迭代阶乘的 SysY 表示（注释从略）。},label={lst:sysy}]
+int clamp_input(int value) {
+  if (value < 0) return 0;
+  if (value > 10) return 10;
+  return value;
+}
+int factorial(int n) {
+  int result = 1; int factor = 2;
+  while (factor <= n) {
+    result = result * factor;
+    factor = factor + 1;
+  }
+  return result;
+}
+int main() {
+  int input = getint();
+  int bounded = clamp_input(input);
+  int result = factorial(bounded);
+  putint(result); putch(10); return 0;
+}
+\end{lstlisting}
+
+这个程序的复杂度是有意克制的。两个有序条件分支暴露控制流；循环暴露回边和循环携带状态；三个自定义函数暴露调用边界；输入输出暴露未解析外部符号。数组、递归、浮点和堆分配会增加新的主题，却不会让本文要求的任何边界更清楚。
+
+\subsection{两种源观察形态，而非两个算法}
+
+预处理属于 C 翻译流程而不是 SysY 的语言契约。为观察它，配套 C 形态把 10 写作对象式宏 \code{FACTORIAL\_LIMIT}，并显式声明三个外部函数；其控制流和算法与清单~\ref{lst:sysy} 相同。此 C 文件只用于观察预处理与由 Clang 生成的产物，不另立语义。
+
+目标契约固定为 \code{riscv64-unknown-linux-gnu}，RV64GC 指令集合与 LP64D ABI。ISA（Instruction Set Architecture）说明机器操作的意义；处理器专用 ABI（processor-specific ABI, psABI）另行规定参数寄存器、栈、ELF 重定位等接口\cite{riscv-isa-2026,riscv-psabi-1.0}。二者不可互相替代。
+
+\begin{table}[tb]
+\caption{同一事实在各观察点的预期痕迹。}
+\label{tab:facts}
+\centering\small
+\begin{tabularx}{\linewidth}{@{}lXXX@{}}
+\toprule
+源事实 & 前端/IR & RV64/对象 & 最终可见结果\\
+\midrule
+上下界判断 & 比较、分支或选择 & 条件分支 & 输入被夹到 $[0,10]$\\
+循环累乘 & CFG 回边、SSA 递推 & \code{mulw}/\code{addiw} 与跳转 & 阶乘值\\
+函数调用 & 带类型 \code{call} & \code{a0}、\code{ra}、调用重定位 & 跨文件协作\\
+换行 10 & \code{i32 10} 实参 & 在 \code{a0} 中物化 & 输出以换行结束\\
+\bottomrule
+\end{tabularx}
+\end{table}

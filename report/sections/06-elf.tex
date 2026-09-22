@@ -1,0 +1,69 @@
+\section{从汇编文本到进程映像}
+\label{sec:elf}
+
+\subsection{汇编：编码已知字节，记录未知地址}
+
+本例的具体链路是作者书写的 \code{bounded\_factorial\_rv64gc.s} 到 \code{asm.rv64.o}。汇编器输入指令、标签和 \code{.text}/\code{.globl}/\code{.type} 等指示符，输出 ELF 可重定位对象（relocatable object）。指令已成为字节；同一节内的局部标签距离通常可立即求出，跨对象函数地址则仍未知。对象用节保存同类内容，用符号表描述定义与未定义名字，并用重定位项描述“链接时应如何修补某处”\cite{elf-gabi-2025,riscv-psabi-1.0}。
+
+以 \code{main} 中 \code{call getint} 为例，汇编文本表达调用意图；对象中的符号表把 \code{main} 标为已定义全局函数、把 \code{getint} 标为未定义；重定位把调用位置、目标符号、类型和加数关联起来。RISC-V 的调用序列可涉及 \code{R\_RISCV\_CALL\_PLT}，并常伴允许链接器松弛（linker relaxation）的标记。这里“未定义”不是错误，而是可重定位对象的正常开放义务。
+
+\begin{figure}[tb]
+\centering
+\fbox{\begin{minipage}{0.92\linewidth}\small
+\texttt{call @getint}（LLVM IR）\\
+$\quad\Downarrow$ 调用约定降低与指令选择\\
+\texttt{call getint}（汇编伪指令）\\
+$\quad\Downarrow$ 编码已知部分，未知目标留作义务\\
+\texttt{.text} 中的调用字节 $+$ \texttt{getint} 符号 $+$ RISC-V 重定位\\
+$\quad\Downarrow$ 全局布局、符号解析、重定位/可能松弛\\
+最终地址相关编码（可执行文件）
+\end{minipage}}
+\caption{一次调用穿过四种表示；箭头不是文本替换，而是契约转换。}
+\label{fig:calltrace}
+\end{figure}
+
+\subsection{链接：把局部地址空间合成一个封闭程序}
+
+链接器输入若干可重定位对象和归档库，先解析符号、选择所需成员，再合并输入节、安排地址并应用重定位，输出具有入口与程序头表的 ELF 文件\cite{lld-design-2026,elf-gabi-2025}。本例在此仅需说明：SysY 运行时库提供 \code{getint}、\code{putint} 和 \code{putch} 的外部定义；启动对象提供入口 \code{\_start}，它完成环境建立并最终调用 \code{main}。故操作系统入口不是 \code{main}。
+
+静态链接把运行所需代码纳入文件。表~\ref{tab:sizes} 记录四条等价入口形态由文件系统 \code{stat} 得到的磁盘字节数。它不同于 \code{size} 所报告的 \code{text/data/bss/dec} 装载内容统计。C 与 SysY 源对象相差 8 字节，作者 IR 对象更小，作者汇编对象最小；静态文件之间只有数百字节差，而共同链接内容占主导。文件大小还受符号表、对齐、节和元数据影响，不能直接代表运行速度或“优化质量”。
+
+\begin{table}[tb]
+\caption{实际对象与静态可执行文件大小（字节）。}
+\label{tab:sizes}
+\centering
+\begin{tabular}{@{}lrr@{}}
+\toprule
+入口表示 & 可重定位对象 & 静态可执行文件\\
+\midrule
+C 观察形态 & 2,736 & 627,032\\
+SysY 源 & 2,744 & 627,032\\
+作者 LLVM IR & 2,312 & 626,968\\
+作者 RV64 汇编 & 1,512 & 626,832\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+链接松弛展示了为何链接器也能优化：汇编器面对未知全局布局只能发出可重定位的通用调用序列；链接器知道最终距离后，若 psABI 允许，可改成更短的编码。因此，对象反汇编和最终文件反汇编可能不同，即使源代码和 LLVM 优化都没有变化。
+
+\subsection{加载：段而非节成为运行视图}
+
+Linux 的 \code{execve} 用新程序映像替换当前进程。ELF 程序头表中的 \code{PT\_LOAD} 项给出文件范围、虚拟地址、内存大小、对齐与权限；若 \code{p\_memsz>p\_filesz}，尾部在内存中补零，这是未初始化数据的常见实现机制\cite{linux-elf-2026,linux-execve-2026}。内核准备初始栈与机器状态，然后把控制权交给 ELF 入口 \code{\_start}。
+
+\begin{figure}[tb]
+\centering
+\begin{tabular}{@{}llcl@{}}
+\toprule
+链接时节视图 & 用途 && 运行时段视图\\
+\midrule
+\code{.text}, \code{.rodata} & 分类/合并字节 &$\longrightarrow$& \code{PT\_LOAD} R--/R-X\\
+\code{.data}, \code{.bss} & 数据与零填充 &$\longrightarrow$& \code{PT\_LOAD} RW-\\
+\code{.symtab}, \code{.strtab} & 链接/诊断元数据 &$\not\longrightarrow$& 通常无须映射\\
+\bottomrule
+\end{tabular}
+\caption{节回答“工具如何组织”，段回答“加载器如何映射”。}
+\label{fig:sections-segments}
+\end{figure}
+
+节（section）与段（segment）可以覆盖同一批字节，却服务不同消费者。最终进程中不需要宏名、WhileStmt 或 SSA 名称；行为被保存为映射的指令/数据、ABI 建立的机器状态以及已经兑现的地址关系。这是整条链上最后一次视角转换。
+

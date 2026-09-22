@@ -1,0 +1,40 @@
+\section{从源文本到带类型程序}
+\label{sec:frontend}
+
+\subsection{预处理：改写解析器将看到的记号}
+
+\paragraph{输入与工作。} C 观察文件包含字符、注释、\code{\#define} 指令和声明。翻译阶段把字符组织为预处理记号，删除注释并展开宏；C 标准工作草案给出了翻译阶段及记号类别的语言层契约\cite{wg14-n3220}。
+
+\paragraph{输出与实例痕迹。} 对该文件执行仅预处理后，\code{value > FACTORIAL\_LIMIT} 和返回语句中的宏均成为字面量 10。行标记记录输出片段与原文件位置的联系；\code{getint} 等声明仍只是普通 C 声明。预处理器不会验证它们是否有实现，也不会计算阶乘。
+
+\paragraph{边界。} 宏名作为可执行实体已经消失，但宏展开得到的记号仍须经语法和类型检查。本例没有头文件包含或条件编译，因而它们只是预处理器的一般能力，不是本产物的观测结果。SysY 源直接进入其前端，不能把 C 观察形态的宏归因给 SysY。
+
+\subsection{词法与语法：线性记号变成源形状的树}
+
+\paragraph{输入与工作。} 词法分析（lexical analysis）把 \code{while (factor <= n)} 分为关键字、标识符、括号和关系运算符等记号；解析（parsing）依照文法把线性序列组织成嵌套结构。Clang AST 刻意贴近源语言形状，便于诊断和源到源工具处理\cite{clang-ast-2026}。
+
+\paragraph{输出与实例痕迹。} \code{clamp\_input} 的首个判断形成“函数声明--复合语句--IfStmt--二元比较--ReturnStmt”的层级；阶乘主体则有 WhileStmt，其条件是 \code{<=}，循环体含两个赋值。\code{result * factor} 的乘法表达式嵌在赋值右侧；\code{factorial(bounded)} 是 CallExpr，实参节点引用局部声明。
+
+\paragraph{边界。} 树保留源码范围、运算符和语句嵌套，却不规定 RV64 指令或物理寄存器。空白、注释和宏拼写通常不再是语义树节点；“循环”此时仍是语言构造，而非基本块与回边。
+
+\subsection{语义分析：树获得绑定、类型和值类别}
+
+语义分析（semantic analysis）把每个标识符引用绑定到声明，检查调用形参与实参、运算类型和返回类型，并区分左值（lvalue）与转成数值后的右值（rvalue）。在本例中，\code{factorial} 的形参与返回值均为 \code{int}；\code{result} 在赋值左侧指示存储位置，在乘法中则要读取其值。\code{getint()} 的结果可初始化 \code{int input}；\code{putint(result)} 与声明的一个整数参数一致。
+
+若把调用改为 \code{factorial(bounded, 1)}，语法仍可组成调用树，但语义分析会因实参数目不匹配而拒绝它。这一反事实只界定检查职责，不是第二个实验程序。另一方面，“$0\le b\le10$”主要由程序控制流建立；普通类型系统只知道 \code{b} 是整数，并不会自动把区间不变量编码进类型。
+
+\begin{table}[tb]
+\caption{前端三层契约。}
+\centering\small
+\begin{tabularx}{\linewidth}{@{}lXXX@{}}
+\toprule
+阶段 & 新增/显式化 & 丢弃或弱化 & 尚未决定\\
+\midrule
+预处理 & 宏展开后的记号、行映射 & 注释、宏作为名字 & 语法与类型是否合法\\
+解析 & 语句/表达式层级 & 多数排版差异 & 名字是否绑定、目标布局\\
+语义分析 & 声明绑定、类型、隐式转换 & 部分表面语法差异 & 指令、寄存器、地址\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+至此输出是一棵“有语言意义的树”，而不是可执行代码。下一阶段需要把嵌套语句翻译成控制流图（Control-Flow Graph, CFG）与显式操作。
