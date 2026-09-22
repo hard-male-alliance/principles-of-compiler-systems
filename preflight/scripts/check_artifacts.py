@@ -30,24 +30,32 @@ def require_riscv_elf(path: Path) -> None:
 
 
 def main() -> int:
-    """校验预处理、AST、双优化级 IR/汇编和对象。 / Validate preprocessing, AST, two optimization levels, and objects."""
+    """校验前端、双优化级输出与对象证据。 / Validate frontend, dual-level, and object evidence."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--preprocessed", type=Path, required=True)
+    parser.add_argument("--tokens", type=Path, required=True)
     parser.add_argument("--ast", type=Path, required=True)
+    parser.add_argument("--symbols", type=Path, required=True)
+    parser.add_argument("--relocations", type=Path, required=True)
+    parser.add_argument("--disassembly", type=Path, required=True)
     parser.add_argument("--llvm-o0", type=Path, required=True)
     parser.add_argument("--llvm-o2", type=Path, required=True)
     parser.add_argument("--assembly-o0", type=Path, required=True)
     parser.add_argument("--assembly-o2", type=Path, required=True)
     parser.add_argument("--object", type=Path, action="append", required=True)
     args = parser.parse_args()
-    require_text(args.preprocessed, ("int fib", "int sum", "int getint"))
+    require_text(args.preprocessed, ("int factorial", "int clamp_input", "10"))
+    require_text(args.tokens, ("identifier 'factorial'", "identifier 'getint'"))
     ast = json.loads(args.ast.read_text(encoding="utf-8"))
     if ast.get("kind") != "TranslationUnitDecl":
         raise SystemExit("AST root is not TranslationUnitDecl")
-    require_text(args.llvm_o0, ("define", "@fib", "@main"))
-    require_text(args.llvm_o2, ("define", "@fib", "@main"))
-    require_text(args.assembly_o0, ("fib:", "main:"))
-    require_text(args.assembly_o2, ("fib:", "main:"))
+    require_text(args.llvm_o0, ("define", "@factorial", "@main"))
+    require_text(args.llvm_o2, ("define", "@factorial", "@main"))
+    require_text(args.assembly_o0, ("factorial:", "main:"))
+    require_text(args.assembly_o2, ("factorial:", "main:"))
+    require_text(args.symbols, ("factorial", "getint", "putint"))
+    require_text(args.relocations, ("getint", "putint", "putch"))
+    require_text(args.disassembly, ("<factorial>", "<main>"))
     if args.llvm_o0.read_bytes() == args.llvm_o2.read_bytes():
         raise SystemExit("O0 and O2 LLVM IR unexpectedly match byte-for-byte")
     if args.assembly_o0.read_bytes() == args.assembly_o2.read_bytes():

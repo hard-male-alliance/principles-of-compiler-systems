@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""比较各可执行表示的可观察行为。 / Compare observable behavior across executable forms."""
+"""比较边界化阶乘各表示的行为。 / Compare bounded-factorial representations."""
 
 from __future__ import annotations
 
@@ -9,11 +9,12 @@ from pathlib import Path
 
 
 CASES = {
-    -3: "0\n0\n",
-    0: "0\n0\n",
-    2: "11\n0\n",
-    5: "50\n1\n",
-    20: "197\n1\n",
+    -3: "1\n",
+    0: "1\n",
+    1: "1\n",
+    5: "120\n",
+    10: "3628800\n",
+    20: "3628800\n",
 }
 
 
@@ -49,7 +50,7 @@ def main() -> int:
                     f"behavior mismatch: command={command!r}, input={value}, "
                     f"expected={expected!r}, actual={actual!r}"
                 )
-        print(f"behavior: PASS: {' '.join(command)}")
+        print(f"behavior: PASS: {' '.join(command)} ({len(CASES)} cases)")
     return 0
 
 

@@ -1,0 +1,36 @@
+/*
+ * 与 C 个案语义相同的 SysY 表示。 / SysY representation with the same case-study semantics.
+ * SysY 运行时函数由课程环境提供。 / Runtime functions are supplied by the SysY environment.
+ */
+
+/** 将任意输入限制到 [0, 10]。 / Clamp arbitrary input to [0, 10]. */
+int clamp_input(int value) {
+  if (value < 0) {
+    return 0;
+  }
+  if (value > 10) {
+    return 10;
+  }
+  return value;
+}
+
+/** 迭代计算 n!。 / Compute n! iteratively. */
+int factorial(int n) {
+  int result = 1;
+  int factor = 2;
+  while (factor <= n) {
+    result = result * factor;
+    factor = factor + 1;
+  }
+  return result;
+}
+
+/** SysY 程序入口。 / SysY program entry. */
+int main() {
+  int input = getint();
+  int bounded = clamp_input(input);
+  int result = factorial(bounded);
+  putint(result);
+  putch(10);
+  return 0;
+}
