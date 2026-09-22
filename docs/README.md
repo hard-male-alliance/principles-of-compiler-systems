@@ -8,8 +8,19 @@
 2. [预备工作：了解你的编译器](预备工作-了解你的编译器.md)：5 分预备作业、报告规范、MLIR 进阶任务和示例程序。
 
 已完成的可复现实验位于 [`../preflight/`](../preflight/README.md)，对应的 LNCS 论文工程位于
-[`../report/`](../report/README.md)，方法与验收决策记录在 [`knowledge/`](knowledge/)，外部资料核查记录在
-[`research/`](research/preflight-research.md)。
+[`../report/`](../report/README.md)。方法与验收决策记录在 [`knowledge/`](knowledge/)，外部资料核查记录在
+[`research/`](research/)；这些英文笔记保存来源、假设与证据边界，正文则在此基础上形成中文综述。
+
+### 设计与研究记录
+
+- [报告验收映射](knowledge/report-acceptance.md)
+- [贯穿案例与工件架构](knowledge/case-study-architecture.md)
+- [独立验证计划](knowledge/validation-plan.md)
+- [Clang/LLVM 编译流水线](research/compiler-pipeline.md)
+- [LLVM IR 与优化语义](research/llvm-ir.md)
+- [RISC-V、ELF 与链接](research/riscv-elf-linking.md)
+- [MLIR 与 AscendNPU IR](research/mlir-ascend.md)
+- [编译系统研究前沿](research/compiler-frontiers.md)
 
 ## SysY 规范
 
