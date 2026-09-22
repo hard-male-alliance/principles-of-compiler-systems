@@ -34,7 +34,9 @@ jobs:
 
     steps:
       - name: Checkout / 检出
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       # Ubuntu 使用发行版维护的交叉 libc、链接器与 QEMU，避免下载未固定的二进制。
       # Ubuntu uses distro-maintained cross libc, linker, and QEMU instead of ad-hoc binaries.
