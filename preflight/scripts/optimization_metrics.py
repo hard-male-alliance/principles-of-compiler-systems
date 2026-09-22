@@ -20,7 +20,11 @@ def llvm_metrics(path: Path) -> dict[str, int]:
     memory = {opcode: 0 for opcode in LLVM_MEMORY_OPS}
     functions = 0
     for raw in lines:
-        line = raw.strip()
+        # 中文：LLVM 基本块标签可带 `; preds = ...` 行尾注释；先剥离注释，
+        # 否则诸如 `6: ; preds = %4` 会被误算成指令。
+        # English: LLVM block labels may carry `; preds = ...` comments. Strip
+        # them first so a line such as `6: ; preds = %4` is not an instruction.
+        line = raw.split(";", 1)[0].strip()
         if line.startswith("define "):
             in_function = True
             functions += 1

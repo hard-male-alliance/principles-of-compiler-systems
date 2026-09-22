@@ -28,14 +28,14 @@ Clang 前端（frontend）随后完成解析、名称绑定和类型检查。AST
 词法指标 & \texttt{-O0} & \texttt{-O2} \\
 \midrule
 LLVM IR \texttt{alloca}/\texttt{load}/\texttt{store} & 10/29/20 & 1/11/13 \\
-LLVM IR 总指令行 & 136 & 197 \\
+LLVM IR 总指令行 & 119 & 161 \\
 RV64 近似指令行/指示行 & 156/60 & 104/47 \\
 RV64 不同助记符数 & 20 & 24 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-值得注意的是，O2 的 LLVM IR 总指令行反而由 136 增至 197，不同 RV64 助记符也由 20 增至 24。这可由循环变换、控制流重写和目标相关准备引入更多显式 IR，而最终后端仍生成更少汇编行。因而词法计数揭示结构变化，却不是动态性能代理；本文没有计时、预热或噪声模型，不声称 O2 在该程序上更快。
+值得注意的是，O2 的 LLVM IR 总指令行反而由 119 增至 161，不同 RV64 助记符也由 20 增至 24。这可由循环变换、控制流重写和目标相关准备引入更多显式 IR，而最终后端仍生成更少汇编行。因而词法计数揭示结构变化，却不是动态性能代理；本文没有计时、预热或噪声模型，不声称 O2 在该程序上更快。
 
 \subsection{RV64 汇编、对象与链接}
 
@@ -64,7 +64,7 @@ QEMU Linux 用户态 & 手写汇编 & RV64GC/LP64D & 5/5 PASS \\
 \end{tabular}
 \end{table}
 
-权威 Linux 配置中的四项 CTest（pipeline artifacts、advanced structure、native equivalence、riscv equivalence）为 4/4 PASS。行为一致与结构检查相互补足：前者能发现某个输入上的语义差异，后者能发现“输出碰巧一致但对象目标错误”等类别问题。
+权威 Linux 配置中的五项 CTest（pipeline artifacts、advanced structure、optimization metrics、native equivalence、riscv equivalence）为 5/5 PASS。行为一致与结构检查相互补足：前者能发现某个输入上的语义差异，后者能发现“输出碰巧一致但对象目标错误”等类别问题。
 
 \subsection{运行时兼容性审计}
 

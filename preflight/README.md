@@ -144,10 +144,10 @@ lines.
 | 环境 / Environment | 指标 / Proxy | O0 | O2 | 结构变化 / Structural change |
 |---|---|---:|---:|---:|
 | Windows, Clang 22.1.8 | IR `alloca/load/store` 合计 | 59 | 24 | -35 (-59.3%) |
-| Windows, Clang 22.1.8 | IR 指令行 | 136 | 162 | +26 (+19.1%) |
+| Windows, Clang 22.1.8 | IR 指令行 | 119 | 137 | +18 (+15.1%) |
 | Windows, Clang 22.1.8 | RV64 汇编指令行近似数 | 156 | 102 | -54 (-34.6%) |
 | Ubuntu 24.04, Clang 18.1.3 | IR `alloca/load/store` 合计 | 59 | 25 | -34 (-57.6%) |
-| Ubuntu 24.04, Clang 18.1.3 | IR 指令行 | 136 | 197 | +61 (+44.9%) |
+| Ubuntu 24.04, Clang 18.1.3 | IR 指令行 | 119 | 161 | +42 (+35.3%) |
 | Ubuntu 24.04, Clang 18.1.3 | RV64 汇编指令行近似数 | 156 | 104 | -52 (-33.3%) |
 
 更细看 Windows/Clang 22 的 O2：`alloca` 从 10 降为 1，`load` 从 29 降为

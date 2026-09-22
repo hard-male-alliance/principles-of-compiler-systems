@@ -40,7 +40,7 @@
 \maketitle
 
 \begin{abstract}
-本文以一个覆盖整数运算、分支、循环、数组、递归函数及带副作用短路求值的 SysY 程序为研究对象，贯通预处理、抽象语法树、LLVM 中间表示（LLVM Intermediate Representation, LLVM IR）、RV64GC 汇编、ELF 对象和静态链接。实验以五个边界与典型输入为共同语义判据：Clang 18.1.3 生成的本机源码与手写 IR 两条路径均为 5/5 通过；在 QEMU RISC-V Linux 用户态中，源码、手写 IR 和手写汇编三条 RV64 路径亦均为 5/5 通过，四项流水线测试全部通过。结构分析说明了静态单赋值形式中的 $\phi$ 节点、\texttt{getelementptr} 地址计算和显式短路控制流，并把它们映射到 RV64 psABI（processor-specific ABI）的寄存器与栈约束。运行时审计还发现，课程预编译 RISC-V 库残留 \texttt{\_impure\_ptr} 依赖，而 \texttt{sylib.h} 定义全局存储并触发多重定义；权威流程因此从 \texttt{sylib.c} 重建同 ABI 运行时。进阶部分只对 AscendNPU IR VecAdd 做可复核的静态结构检查，不冒充专用编译或真机执行。
+本文以一个覆盖整数运算、分支、循环、数组、递归函数及带副作用短路求值的 SysY 程序为研究对象，贯通预处理、抽象语法树、LLVM 中间表示（LLVM Intermediate Representation, LLVM IR）、RV64GC 汇编、ELF 对象和静态链接。实验以五个边界与典型输入为共同语义判据：Clang 18.1.3 生成的本机源码与手写 IR 两条路径均为 5/5 通过；在 QEMU RISC-V Linux 用户态中，源码、手写 IR 和手写汇编三条 RV64 路径亦均为 5/5 通过，五项流水线测试全部通过。结构分析说明了静态单赋值形式中的 $\phi$ 节点、\texttt{getelementptr} 地址计算和显式短路控制流，并把它们映射到 RV64 psABI（processor-specific ABI）的寄存器与栈约束。运行时审计还发现，课程预编译 RISC-V 库残留 \texttt{\_impure\_ptr} 依赖，而 \texttt{sylib.h} 定义全局存储并触发多重定义；权威流程因此从 \texttt{sylib.c} 重建同 ABI 运行时。进阶部分只对 AscendNPU IR VecAdd 做可复核的静态结构检查，不冒充专用编译或真机执行。
 
 \keywords{编译流水线 \and LLVM IR \and RISC-V \and MLIR \and 渐进式降低 \and 可复现性}
 \end{abstract}

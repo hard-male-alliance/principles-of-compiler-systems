@@ -9,7 +9,7 @@ start (accessed 2026-09-22). It is not standalone upstream MLIR: the `hacc` and
 `hivm` dialects are supplied by the AscendNPU IR/CANN toolchain, so ordinary
 `mlir-opt` cannot parse it.
 
-## 可观察的渐进式降低 / Observable progressive lowering
+## 已观察的 HIVM 静态结构 / Observed HIVM static structure
 
 | 层次 / Layer | 本例中的表示 / Representation | 语义 / Meaning |
 |---|---|---|
@@ -28,6 +28,21 @@ optimization before LLVM IR. The repository's structural check only preserves
 that evidence; it is **not** dialect parsing, successful compilation, or
 on-device execution.
 
+## 文档给出的降低边界 / Documented lowering boundaries
+
+官方架构文档描述的总体链路是 `HFusion → HIVM → low-level MLIR → LLVM IR →
+算子二进制`。HFusion 最大限度保留 named-operation 高层语义；HIVM 逐步落实
+核间映射、片上内存分配及处理单元/同步；随后 `hivmc` 才把低层 MLIR 转换为
+LLVM IR 并生成二进制。本仓库的 `add.mlir` 已经位于 HIVM 层，因此它只能作为
+这条链路的**一个快照**，不能证明上述阶段已在本地执行。
+
+The official architecture describes `HFusion → HIVM → low-level MLIR → LLVM
+IR → operator binary`. HFusion retains named-operation semantics; HIVM makes
+core mapping, on-chip memory, processing-unit mapping, and synchronization more
+concrete; `hivmc` then converts low-level MLIR to LLVM IR and emits the binary.
+The checked-in `add.mlir` is already an HIVM-layer snapshot, so it is evidence
+of one level only, not an executed local lowering trace.
+
 ## 官方环境与命令 / Official environment and command
 
 官方示例使用 `bishengir-compile add.mlir -enable-hivm-compile -o kernel.o`，
@@ -45,4 +60,5 @@ of those dependencies and make no on-device execution claim.
 来源 / Sources:
 
 - [AscendNPU IR：运行第一个样例](https://ascendnpu-ir.gitcode.com/zh_cn/sources/introduction/quick_start/examples_zh.html)
+- [AscendNPU IR：架构设计与编译流程](https://ascendnpu-ir.gitcode.com/zh_cn/sources/introduction/architecture_zh.html)
 - [CANN 毕昇编译器](https://www.hiascend.com/cann/bisheng)
