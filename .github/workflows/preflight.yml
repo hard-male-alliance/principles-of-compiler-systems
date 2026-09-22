@@ -53,3 +53,7 @@ jobs:
       - name: Generate, link, and verify / 生成、链接并验证
         working-directory: preflight
         run: cmake --build --preset ci --target verify
+
+      - name: Run CTest / 运行 CTest
+        working-directory: preflight
+        run: ctest --preset ci
