@@ -75,7 +75,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
             latexmk poppler-utils texlive-xetex texlive-lang-chinese \
-            texlive-latex-extra texlive-fonts-recommended
+            texlive-latex-extra texlive-fonts-recommended texlive-publishers
 
       - name: Build LNCS PDF / 构建 LNCS PDF
         working-directory: report

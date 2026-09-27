@@ -1,0 +1,45 @@
+% Object, link, and process image / 目标文件、链接与进程映像
+\begin{figure}[htbp]
+  \centering
+  \begin{tikzpicture}[x=1cm,y=1cm]
+    \node[vis/label,font=\bfseries\footnotesize] at (0,3.18) {可重定位目标};
+    \node[vis/label,font=\bfseries\footnotesize] at (4.05,3.18) {链接后的映像};
+    \node[vis/label,font=\bfseries\footnotesize] at (8.10,3.18) {装载与启动};
+
+    \node[vis/artifact,text width=2.65cm] (text) at (0,2.35)
+      {\texttt{.text}：调用位置 $P$};
+    \node[vis/deferred node,text width=2.65cm] (rela) at (0,1.25)
+      {\texttt{.rela.text}\\$R_{\mathrm{CALL}}(S,A,P)$};
+    \node[vis/deferred node,text width=2.65cm] (sym) at (0,.15)
+      {\texttt{.symtab}\\$S=\texttt{putint}$ (UND)};
+    \draw[vis/deferred edge] (text) -- (rela);
+    \draw[vis/deferred edge] (rela) -- (sym);
+
+    \node[vis/artifact,text width=2.65cm] (archive) at (4.05,2.35)
+      {归档成员：\\定义 \texttt{putint}};
+    \node[vis/semantic node,text width=2.65cm] (merged) at (4.05,1.25)
+      {合并输出节\\$S+A-P$ 已确定};
+    \node[vis/decision,text width=2.65cm] (relax) at (4.05,.15)
+      {布局后可选松弛\\缩短调用序列};
+    \draw[vis/semantic edge] (archive) -- (merged);
+    \draw[vis/edge] (merged) -- (relax);
+    \draw[vis/edge] (rela.east) -- node[vis/label,above]{解析 $S$} (merged.west);
+
+    \node[vis/artifact,text width=2.65cm] (seg1) at (8.10,2.35)
+      {\texttt{PT\_LOAD}\\R-- / R-X};
+    \node[vis/artifact,text width=2.65cm] (seg2) at (8.10,1.25)
+      {\texttt{PT\_LOAD}\\RW-};
+    \node[vis/semantic node,text width=2.65cm] (start) at (8.10,.15)
+      {入口 $\rightarrow$ 运行时启动\\$\rightarrow\ \texttt{main}$};
+    \draw[vis/edge] (seg1) -- (seg2);
+    \draw[vis/semantic edge] (seg2) -- (start);
+    \draw[vis/edge] (merged.east) -- node[vis/label,above]{按段映射} (seg2.west);
+
+    \node[vis/note,anchor=north,text width=2.9cm] at (0,-.55)
+      {节、符号与重定位服务于链接器。};
+    \node[vis/note,anchor=north,text width=2.9cm] at (8.10,-.55)
+      {段是加载器映射文件的单位。};
+  \end{tikzpicture}
+  \caption{对 \texttt{putint} 的调用从“带类型的未决引用”变为链接后的地址关系，再随可装载段进入进程映像；节、符号、重定位和段分别服务于不同的决定。}
+  \label{fig:object-process}
+\end{figure}

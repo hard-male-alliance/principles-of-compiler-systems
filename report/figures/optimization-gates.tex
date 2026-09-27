@@ -1,0 +1,37 @@
+% Optimization legality and profitability / 优化的合法性与收益性
+\begin{figure}[htbp]
+  \centering
+  \begin{tikzpicture}[node distance=8mm and 13mm]
+    \node[vis/artifact] (p) {$P$};
+    \node[vis/artifact,right=27mm of p] (pp) {$P'$};
+    \node[vis/artifact,below=18mm of p] (bp) {$[\![P]\!](x)$};
+    \node[vis/artifact,below=18mm of pp] (bpp) {$[\![P']\!](x)$};
+    \draw[vis/edge] (p) -- node[vis/label,above] {变换 $T$} (pp);
+    \draw[vis/semantic edge] (p) -- node[vis/label,left] {语义} (bp);
+    \draw[vis/semantic edge] (pp) -- node[vis/label,right] {语义} (bpp);
+    \draw[vis/semantic,line width=1.2pt] (bp) -- node[vis/label,below,text=semblue]
+      {$A(x)\Rightarrow$ 行为相同} (bpp);
+    \node[vis/decision,text width=5.05cm,below=6mm of $(bp)!0.5!(bpp)$] (assume)
+      {$A$：边界内索引、整数溢出语义、别名信息、可用的归约律};
+    \node[vis/constraint node,text width=4.75cm,below=5mm of assume] (bad)
+      {每次加法后截断累加器：不能任意重结合};
+    \draw[vis/cross] ([xshift=-2mm,yshift=2mm]bad.north east) --
+      ([xshift=2mm,yshift=-2mm]bad.north east);
+    \draw[vis/cross] ([xshift=-2mm,yshift=-2mm]bad.north east) --
+      ([xshift=2mm,yshift=2mm]bad.north east);
+
+    \node[vis/decision,minimum width=3.7cm,anchor=north west] (g1) at (6.55,.6)
+      {1. 语义合法};
+    \node[vis/artifact,minimum width=3.7cm,below=7mm of g1] (g2)
+      {2. 目标可表示};
+    \node[vis/artifact,minimum width=3.7cm,below=7mm of g2] (g3)
+      {3. 成本模型有利};
+    \draw[vis/edge] (g1) -- (g2);
+    \draw[vis/edge] (g2) -- (g3);
+    \node[vis/note,text width=3.9cm,below=5mm of g3] (choices)
+      {标量化、向量化或谓词化可能停在不同门槛；寄存器压力、代码尺寸与硬件代价只在合法之后参与选择。};
+    \node[vis/label,font=\bfseries\footnotesize,above=3mm of g1] {工程决策漏斗};
+  \end{tikzpicture}
+  \caption{优化首先要求语义图在假设 $A$ 下交换；通过合法性门槛后，目标特性与成本模型才决定是否采用该改写。合法不等于有利，未采用也不等于不可证明。}
+  \label{fig:optimization-gates}
+\end{figure}

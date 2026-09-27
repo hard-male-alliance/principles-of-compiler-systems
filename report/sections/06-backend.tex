@@ -1,0 +1,176 @@
+\section{降到 RV64：约束求解、机器资源与二进制契约}
+\label{sec:backend}
+\label{sec:riscv}
+
+LLVM IR 故意把机器资源藏在抽象之后：SSA 名称仿佛无限，整数位宽由类型给出，\texttt{phi} 直接表达控制流汇合，调用只写函数类型。RV64 处理器却只有有限寄存器、受编码约束的指令，以及由平台规定的函数接口。后端（backend）因此不是逐行翻译器，而是一个连续的约束求解过程：它要选择目标能够执行的操作，为满足数据依赖的操作排定顺序，把同时存活的值放进有限寄存器，最后兑现应用二进制接口（application binary interface, ABI）。LLVM 的典型主干是
+
+\begin{center}
+\small\ttfamily
+LLVM IR $\rightarrow$ legalization/selection $\rightarrow$ MachineInstr
+$\rightarrow$ scheduling $\rightarrow$ register allocation
+$\rightarrow$ frame lowering $\rightarrow$ MC
+\end{center}
+
+其中组合、调度和机器级清理可能出现多次；这是一组相互制约的问题，而不是不可变的 pass 清单\cite{llvm-codegen}。本节沿 \texttt{clipped\_dot} 走完这条链：既给出足以解释设计的数学模型，也随即指出生产编译器为何不能照搬教科书中的理想算法。图~\ref{fig:backend-constraints} 先把同一组操作在四种约束视图中并排，后文再逐一展开。
+
+\input{figures/backend-constraints}
+
+\subsection{指令选择：从语义关系到有成本的覆盖}
+
+设源操作为 $u$，目标 $T$ 上可实现它的机器序列集合为 $L_T(u)$。最朴素的选择问题是
+\begin{equation}
+  m^*=\arg\min_{m\in L_T(u)} C_T(m)
+  \quad\text{s.t.}\quad
+  \operatorname{Beh}_T(m)\subseteq
+  \operatorname{Beh}_{\mathrm{IR}}(u) .
+  \label{eq:isel}
+\end{equation}
+行为集合的包含方向沿用式~\eqref{eq:semantic-refinement}：目标序列只能选择 IR 在既定未定义行为、内存模型和调用约定下允许的行为。成本 $C_T$ 可以综合指令数、延迟、吞吐、代码尺寸和寄存器压力。式~\ref{eq:isel} 揭示了两个重点：选择的单位未必是一条 IR 指令；局部最短的序列也未必给出全局最优代码。
+
+目标不支持的操作或类型先经过合法化（legalization）。例如，某目标可把过宽整数拆成若干机器字，也可把罕见运算改写为运行库调用。对改写 $u\mapsto(u_1,\ldots,u_k)$，合法化承担的基本义务是
+\[
+  \mathsf{Sem}(u)=\mathsf{Sem}(u_1;\cdots;u_k),
+  \qquad u_i\in\mathcal{O}_T,
+\]
+其中 $\mathcal{O}_T$ 是目标可继续处理的操作集合。现实中“可处理”还受寄存器类、立即数范围、寻址模式和向量形状约束；因此合法化、组合与选择必须反馈迭代，而不能被隔成三张互不相干的查找表。
+
+LLVM 长期使用 SelectionDAG：把基本块附近的操作及依赖建成有向无环图（directed acyclic graph, DAG），在其中做组合、类型与操作合法化、模式匹配和调度。GlobalISel 则显式经过 IRTranslator、通用机器 IR（generic Machine IR, gMIR）、Legalizer、RegisterBankSelect 和 InstructionSelect；它便于在更大范围保留机器无关信息，但各目标的覆盖程度和回退策略并不相同\cite{llvm-globalisel,llvm-globalisel-pipeline}。二者都说明了同一个工程事实：式~\ref{eq:isel} 是设计准绳，而工业实现依赖规则生成器、目标钩子和启发式搜索来控制编译时间。
+
+\paragraph{在案例中。}
+\texttt{i32} 乘法与加法落到 \texttt{mulw}/\texttt{addw}，数组寻址落到移位、整数加法和 \texttt{lw}。而 IR 的比较加条件分支可以合并为直接比较寄存器的 \texttt{blt}；机器没有必要先物化一个布尔值。源程序写下标 $i$，后端也可以把循环改成两个递增指针和一个末端指针：选择的是等价的计算形状，而不是相似的表面语法。
+
+\subsection{RV64 的宽度纪律：地址为 64 位，值仍可为 32 位}
+
+实验目标 RV64GC/LP64D 同时包含三层契约。指令集体系结构（instruction set architecture, ISA）规定可用的机器操作；LP64D ABI 规定类型布局、传参和栈；目标三元组还选择操作系统与对象格式。RV64 的 $\mathrm{XLEN}=64$ 不会把 SysY/C 的 \texttt{int} 自动变成 64 位。对寄存器值 $x$，RV64 的字操作可以概括为
+\begin{align}
+  \operatorname{lw}(p) &= \operatorname{sext}_{32\to64}(M[p,p+4)),\\
+  \operatorname{addw}(x,y) &= \operatorname{sext}_{32\to64}((x+y)\bmod 2^{32}),\\
+  \operatorname{mulw}(x,y) &= \operatorname{sext}_{32\to64}((xy)\bmod 2^{32}).
+\end{align}
+因此地址计算使用 64 位 \texttt{add}，数组元素与累加器使用 \texttt{lw}/\texttt{mulw}/\texttt{addw}\cite{bin-riscv-unpriv}。若把 \texttt{lw} 换成 \texttt{ld}，一次会读入两个元素；若无条件把 W 类算术换成 64 位算术，32 位回绕后的比较结果可能改变。目标宽度不是性能装饰，而是源类型语义的一部分。
+
+RISC-V 的 G 是 I、M、A、F、D、Zicsr、Zifencei 的约定集合，C 扩展另行提供 16 位压缩编码\cite{bin-riscv-naming}。案例的整数内核只需要 I 与 M；目标允许 A/F/D 并不意味着每个函数都使用原子或浮点指令。模块化 ISA 给硬件实现留出选择空间，但软件分发必须把实际 ISA 与 ABI 基线说清，否则同名“RISC-V 程序”仍可能无法互操作。
+
+\subsection{调度：偏序的线性扩展，而非任意重排}
+
+选择之后得到的依赖 DAG 记为 $G=(V,E)$。一份调度是位置函数 $s:V\to\mathbb{N}$；若边 $(u,v)$ 的延迟为 $\ell(u,v)$，则必须满足
+\begin{equation}
+  s(v)\ge s(u)+\ell(u,v),
+  \label{eq:schedule-dep}
+\end{equation}
+并且每周期占用某类执行资源的操作数不超过该资源容量。若只最小化尾部时间 $\max_v(s(v)+\ell_v)$，调度器会积极拉开独立操作；但这常使更多中间值同时存活。一个更诚实的目标是
+\begin{equation}
+  \min_s\bigl(\alpha L(s)+\beta P(s)+\gamma S(s)\bigr),
+  \label{eq:schedule-cost}
+\end{equation}
+其中 $L$ 是关键路径或估计周期，$P$ 是峰值寄存器压力，$S$ 是代码尺寸。系数由目标微架构和优化级别决定。
+
+案例每轮的两个 \texttt{lw} 相互独立，可在 \texttt{mulw} 之前并行准备；乘积必须等两次读取完成，累加又依赖截断后的乘积。提前读取下一轮可能隐藏访存延迟，却会增加跨迭代活跃值。LLVM 因而使用目标调度模型和启发式列表调度，而不是精确求解式~\ref{eq:schedule-cost}：通用最优调度代价过高，且真实性能还受缓存、分支预测与具体核实现影响。生产后端追求的是在编译时间预算内稳定地产生好代码，而不是为抽象机器求得不可迁移的数学最优。
+
+\subsection{活跃性：用不动点回答“这个值还要不要”}
+
+寄存器分配首先需要知道值在何处仍会被使用。对控制流图中的基本块 $b$，记 $\mathrm{use}_b$ 为先于本块定义而使用的值，$\mathrm{def}_b$ 为本块定义，经典活跃性（liveness）方程为
+\begin{align}
+  \mathrm{out}_b &= \bigcup_{s\in\mathrm{succ}(b)}\mathrm{in}_s,\\
+  \mathrm{in}_b &= \mathrm{use}_b\cup(\mathrm{out}_b-\mathrm{def}_b).
+  \label{eq:liveness}
+\end{align}
+从空集反复应用式~\ref{eq:liveness} 会在有限值域上到达最小不动点。它不是抽象仪式：若输入长度原在 \texttt{a2}，计算完末端地址后该长度不再被使用，\texttt{a2} 就可承载数组元素和乘积。无限个 SSA 名称由此被压缩到同一物理寄存器的不相交生命周期中。
+
+把活跃区间相交的值连边，得到干涉图 $H=(V_H,E_H)$。若某寄存器类有 $K$ 个可用寄存器，理想化分配就是寻找着色
+\[
+  c:V_H\to\{1,\ldots,K\},\qquad
+  (u,v)\in E_H\Rightarrow c(u)\ne c(v).
+\]
+图着色说明了资源冲突的本质\cite{llvm-chaitin1981}，却不足以描述生产分配器：物理寄存器可能互相别名，调用参数已经预着色，不同指令限制不同寄存器类，活跃区间还能拆分。LLVM 的分配器综合 live interval、驱逐、合并、拆分和 spill 成本\cite{llvm-codegen}。当 $K$ 不够时，值可溢出（spill）到栈，也可对廉价常量做重物化（rematerialization）；后者用计算换访存。案例内核压力很低，\texttt{t0--t6} 与参数寄存器已经足够，所以无需为中间值建立栈槽。
+
+调度与分配在这里真正相遇：拉长独立 load 与消费点之间的距离，可能降低流水线停顿，却会在干涉图中增加边。实际后端常在分配前按压力调度，并在分配后修补 hazard；不存在适合所有目标的“先完美调度、再独立着色”。
+
+\subsection{ABI：把函数调用写成状态变换契约}
+
+把机器状态写成 $\sigma=(R,M,pc)$。对函数 $f$，ABI 不规定内部路径，只要求从满足入口条件的 $\sigma_{\mathrm{in}}$ 到返回状态 $\sigma_{\mathrm{out}}$ 时：参数与返回值位于约定位置；被调用者保存寄存器保持不变；栈指针恢复；内存副作用符合语言与链接契约。对 RV64 的标准整数调用约定，\texttt{a0--a7} 传递参数，\texttt{a0--a1} 也承载返回值；\texttt{t0--t6} 与 \texttt{a0--a7} 为调用者保存，\texttt{s0--s11} 为被调用者保存，\texttt{ra} 保存返回地址\cite{bin-riscv-psabi}。在每个调用边界还要求
+\begin{equation}
+  sp\equiv 0\pmod {16}.
+  \label{eq:stack-align}
+\end{equation}
+
+\texttt{clipped\_dot(a,b,n,lo,hi)} 的五个参数自然进入 \texttt{a0--a4}，结果回到 \texttt{a0}。它不调用其他函数，也不使用必须恢复的 s 寄存器，因而可以既不调整 \texttt{sp}，也不保存 \texttt{ra}。这不是省略了“标准序言”，而是 ABI 从未要求固定模板。相反，\texttt{main} 会调用 I/O 与内核；每次 \texttt{call} 都改写 \texttt{ra}，故它在帧中保存自己的返回地址。这里的 \texttt{sd}/\texttt{ld ra} 是调用者为跨调用保存架构状态，不应与寄存器不足造成的 spill 混为一谈。
+
+案例的 80-byte 栈帧同时容纳两个 8 元素 \texttt{i32} 数组和返回地址，并满足式~\ref{eq:stack-align}。帧降低（frame lowering）在寄存器分配之后才掌握 spill 槽、局部对象、被保存寄存器和对齐的总需求，由此把抽象 frame index 变成 \texttt{sp} 相对偏移。优化器若把数组常量移入只读区，帧就可能大幅缩小；栈帧尺寸取决于最终存储策略，而不是源代码中局部变量的计数。
+
+\subsection{读一遍手写 RV64：让每条指令承担一种责任}
+
+下面保留案例核心的控制结构，并在右侧标出语义责任：
+
+\begin{lstlisting}[language=RISCV,basicstyle=\ttfamily\scriptsize]
+li      t0, 0                  # acc = 0
+li      t1, 0                  # i = 0
+.Lloop:
+bge     t1, a2, .Ldone        # while (i < n)
+slli    t2, t1, 2             # byte offset = 4*i
+add     t3, a0, t2            # &a[i], 64-bit address
+lw      t4, 0(t3)             # signed i32 a[i]
+add     t3, a1, t2            # &b[i]
+lw      t5, 0(t3)             # signed i32 b[i]
+mulw    t4, t4, t5            # i32 product
+blt     t4, a3, .Llower       # product < lo
+blt     a4, t4, .Lupper       # hi < product
+.Laccumulate:
+addw    t0, t0, t4            # acc += clipped product
+addiw   t1, t1, 1             # ++i in the source value domain
+j       .Lloop
+.Llower: mv t4, a3; j .Laccumulate
+.Lupper: mv t4, a4; j .Laccumulate
+.Ldone:  mv a0, t0; ret
+\end{lstlisting}
+
+控制流把三种截断结果汇入唯一累加块，因而循环回边和状态更新只有一份。用函数
+\[
+  \operatorname{clip}_{lo,hi}(x)=
+  \begin{cases}
+    lo,&x<lo,\\ x,&lo\le x\le hi,\\ hi,&x>hi
+  \end{cases}
+\]
+来看，两条条件分支只是该分段函数在没有条件码寄存器的 ISA 上的一种实现。工程上还可尝试条件选择或无分支序列；它们是否更快取决于分支可预测性、指令条数与关键路径，不能仅凭“无分支”标签判断。
+
+输入 $n=8$ 时，乘积为 $(-8,-3,7,12,-9,-10,12,15)$，截断后为 $(-8,-3,7,12,-8,-8,12,12)$，和为 16。这组数值在机器层最有解释力之处，不是充当测试用例，而是把 \texttt{mulw}、两个有符号 \texttt{blt} 和 \texttt{addw} 串成一条可心算的语义链。
+
+\texttt{main} 的关键接口则是：
+\begin{lstlisting}[language=RISCV,basicstyle=\ttfamily\scriptsize]
+addi    sp, sp, -80
+sd      ra, 72(sp)             # preserve our caller's return address
+...                              # two i32[8] arrays at sp and sp+32
+call    getint
+...                              # clamp n to [0,8] in a2
+mv      a0, sp
+addi    a1, sp, 32
+li      a3, -8
+li      a4, 12
+call    clipped_dot
+call    putint                  # return in a0 is already argument 0
+...
+ld      ra, 72(sp)
+addi    sp, sp, 80
+ret
+\end{lstlisting}
+返回值与下一个调用的首参数共用 \texttt{a0}，所以不需要搬移。这种“接口对齐”既来自 ABI，也来自寄存器合并；它展示了稳定约定如何给局部优化创造机会。
+
+\subsection{伪指令、汇编指示与 MC：文字还不是机器字节}
+
+\texttt{li}、\texttt{mv}、\texttt{j}、\texttt{ret} 和 \texttt{call} 是伪指令（pseudoinstruction）。\texttt{mv} 常可编码为加零，\texttt{ret} 通常归约为经 \texttt{ra} 的 \texttt{jalr}；\texttt{li} 可能需要一条或多条真实指令。\texttt{call symbol} 保留尚未知的符号距离，由汇编器产生 PC 相对指令与重定位，链接器还可在距离允许时松弛为更短形式\cite{bin-riscv-asm,bin-riscv-psabi-relax}。因此“一行汇编等于一条机器指令”并不是接口保证。
+
+同一文件中还有汇编指示（assembler directive），它们不由 CPU 执行。\texttt{.text} 选择节，\texttt{.globl}、\texttt{.type} 与 \texttt{.size} 描述符号；\texttt{.attribute} 和 \texttt{.note.GNU-stack} 则记录目标属性。代码与元数据必须一起进入对象文件，因为独立编译要求链接器能够在没有源程序的情况下解析符号和重定位。
+
+LLVM 在最后把 \texttt{MachineInstr} 降为 MC 层的 \texttt{MCInst}。\texttt{MCAsmStreamer} 可打印 \texttt{.s}，\texttt{MCObjectStreamer} 与编码器则可直接形成对象文件；二者共享的核心是指令、标签、节和 fixup，而不是某份汇编文本\cite{llvm-codegen}。这也解释了后端与下一章的边界：后端已经确定“执行什么”和“遵守何种机器接口”，汇编器与链接器继续决定这些选择如何编码、定位并组合成进程可装载的映像。
+
+\subsection{从模型中抽取工程原则}
+
+这一层的形式化并不要求把 LLVM 描述成一个求全局最优解的数学机器。恰恰相反，模型的价值在于标出不可违反的约束和可以折衷的目标：
+\begin{enumerate}
+  \item 语义细化与 ABI 是硬约束；指令条数、延迟和代码尺寸是成本，不能为了成本破坏契约。
+  \item 合法化、选择、调度和分配共享信息。把它们完全割裂会制造局部最优，例如为隐藏延迟而造成无法承受的寄存器压力。
+  \item 教科书模型给出问题骨架，不等于生产算法。DAG 覆盖、最优调度和图着色都可能计算昂贵；LLVM 用目标描述、启发式和分阶段修正换取可预测的编译时间。
+  \item ISA 提供机制，ABI 提供社会契约。前者可以模块化演进，后者必须稳定，独立编译的软件生态才能长期组合。
+\end{enumerate}
+
+于是，“降到机器”不是逐步丢失高级信息，而是把高级语义逐层兑现为更具体的约束：SSA 数据依赖成为调度偏序，值的未来使用成为活跃性不动点，有限寄存器成为干涉关系，函数类型成为 ABI 状态变换，符号调用成为等待链接器求值的重定位。抽象没有消失；它换成了处理器和工具链能够共同执行的形式。

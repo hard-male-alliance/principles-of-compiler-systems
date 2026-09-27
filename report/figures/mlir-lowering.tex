@@ -1,0 +1,50 @@
+% Progressive MLIR lowering / MLIR 渐进式降低
+\begin{figure}[htbp]
+  \centering
+  \begin{tikzpicture}
+    \matrix (m) [matrix of nodes,
+      nodes={vis/artifact,text width=2.55cm,minimum height=.78cm},
+      row sep=2.4mm,column sep=2.5mm,
+      column 1/.style={nodes={vis/label,text width=1.05cm,draw=none,fill=none}},
+      column 2/.style={nodes={vis/semantic node}},
+      column 3/.style={nodes={vis/decision}},
+      column 4/.style={nodes={vis/artifact}}] {
+      & |[vis/label,font=\bfseries\footnotesize,draw=none,fill=none]| 结构化快照
+      & |[vis/label,font=\bfseries\footnotesize,draw=none,fill=none]| 混合快照
+      & |[vis/label,font=\bfseries\footnotesize,draw=none,fill=none]| 面向目标的快照 \\
+      计算 & {\shortstack{\texttt{linalg} 归约\\截断映射}}
+           & {\shortstack{\texttt{vector} 与\\残余 \texttt{linalg}}}
+           & {\shortstack{目标内建函数\\LLVM 方言}} \\
+      数据 & {\shortstack{\texttt{tensor} 值\\形状属性}}
+           & {\shortstack{\texttt{tensor}/\texttt{memref}\\并存}}
+           & {\shortstack{缓冲区\\地址空间}} \\
+      控制 & 隐式迭代域
+           & {\shortstack{\texttt{scf.forall}\\\texttt{scf.for}}}
+           & 分支与调用 \\
+      目标 & 布局仍抽象
+           & {\shortstack{向量宽度\\内存空间}}
+           & ABI 与设备操作 \\
+    };
+
+    \draw[vis/edge] ([yshift=2mm]m-1-2.north east) --
+      node[vis/label,above]{依接口改写} ([yshift=2mm]m-1-3.north west);
+    \draw[vis/edge] ([yshift=2mm]m-1-3.north east) --
+      node[vis/label,above]{按目标合法化} ([yshift=2mm]m-1-4.north west);
+
+    \draw[vis/semantic,line width=1pt,rounded corners=2pt]
+      ([xshift=-2pt,yshift=2pt]m-2-2.north west) rectangle
+      ([xshift=2pt,yshift=-2pt]m-5-3.south east);
+    \node[vis/label,text=semblue,fill=white,inner sep=1.5pt]
+      at ($(m-5-2.south)!0.5!(m-5-3.south)+(0,-.28)$)
+      {结构化事实仍可由接口访问};
+
+    \draw[vis/deferred edge] ([yshift=-3mm]m-5-2.south) to[bend right=20]
+      node[vis/label,below]{跳过混合态：过早丢失信息}
+      ([yshift=-3mm]m-5-4.south);
+    \coordinate (x) at ($(m-5-3.south)+(0,-.55)$);
+    \draw[vis/cross] ($(x)+(-2mm,-2mm)$) -- ($(x)+(2mm,2mm)$);
+    \draw[vis/cross] ($(x)+(-2mm,2mm)$) -- ($(x)+(2mm,-2mm)$);
+  \end{tikzpicture}
+  \caption{渐进式降低改变的是模块中各种抽象的组成比例：计算、数据、控制和目标约束可以按不同节奏显式化；接口与合法性条件使混合表示仍可组合。}
+  \label{fig:mlir-lowering}
+\end{figure}
