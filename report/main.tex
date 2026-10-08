@@ -6,9 +6,9 @@
 
 \title{\texorpdfstring{深入理解编译系统：\\[0.15em]一个 SysY 程序的意义、表示与抉择}{深入理解编译系统：一个 SysY 程序的意义、表示与抉择}}
 \titlerunning{深入理解编译系统}
-\author{组员一（学号）\inst{1} \and 组员二（学号）\inst{1}}
-\authorrunning{组员一与组员二}
-\institute{课程班级与小组（提交前填写）}
+\author{郭嘉睿（2413174） \   王艺霖（2410824）}
+\authorrunning{深入理解编译系统}
+\institute{编译系统原理上机大作业预备工作}
 
 \begin{document}
 \maketitle
@@ -22,14 +22,14 @@
 \section*{作者分工}
 \begin{table}[H]
   \centering
-  \caption{两位组员的工作分工（提交前用真实姓名与学号替换占位符）。}
+  \caption{两位组员的工作分工。}
   \label{tab:contributions}
   \begin{tabularx}{\textwidth}{@{}p{0.20\textwidth}X@{}}
     \toprule
     成员 & 主要贡献 \\
     \midrule
-    组员一（学号） & 贯穿案例与形式化主线设计；SysY、预处理、前端、LLVM IR 与优化机制的综述和阐释。\\
-    组员二（学号） & RV64、ELF、链接与装载机制的综述；MLIR/AscendNPU IR 与编译前沿调研；视觉设计与排版。\\
+    郭嘉睿 & 贯穿案例与形式化主线设计；SysY、预处理、前端、LLVM IR 与优化机制的综述和阐释。\\
+    王艺霖 & RV64、ELF、链接与装载机制的综述；MLIR/AscendNPU IR 与编译前沿调研；视觉设计与排版。\\
     共同完成 & 章节架构、跨层语义映射、工程权衡分析、文献整理与全文审阅。\\
     \bottomrule
   \end{tabularx}
@@ -48,5 +48,15 @@
 
 \bibliographystyle{splncs04}
 \bibliography{bib/frontend,bib/llvm-backend,bib/binary,bib/validation,bib/mlir-frontiers}
+
+\clearpage
+\appendix
+\section{GitHub 仓库}
+\label{app:github-repository}
+
+本小组的 GitHub 仓库链接如下：
+\begin{flushleft}
+\url{https://github.com/hard-male-alliance/principles-of-compiler-systems}
+\end{flushleft}
 
 \end{document}
