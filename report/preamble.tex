@@ -120,3 +120,13 @@
 
 \newcommand{\code}[1]{\texttt{#1}}
 \newcommand{\stage}[1]{\textbf{#1}}
+
+% Use the same right-aligned running header on odd and even pages.
+\makeatletter
+\let\reportOriginalHeadings\ps@headings
+\def\ps@headings{%
+  \reportOriginalHeadings
+  \let\@evenhead\@oddhead
+}
+\makeatother
+\pagestyle{headings}
